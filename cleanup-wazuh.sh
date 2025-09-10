@@ -60,6 +60,8 @@ log "Stopping Wazuh services..."
 sudo systemctl stop wazuh-indexer 2>/dev/null || warn "wazuh-indexer service not running"
 sudo systemctl stop wazuh-manager 2>/dev/null || warn "wazuh-manager service not running"
 sudo systemctl stop wazuh-dashboard 2>/dev/null || warn "wazuh-dashboard service not running"
+sudo systemctl stop filebeat 2>/dev/null || warn "filebeat service not running"
+sudo systemctl stop wazuh-agent 2>/dev/null || warn "wazuh-agent service not running"
 sudo systemctl stop nginx 2>/dev/null || warn "nginx service not running"
 
 # Disable services
@@ -67,6 +69,8 @@ log "Disabling Wazuh services..."
 sudo systemctl disable wazuh-indexer 2>/dev/null || warn "wazuh-indexer service not installed"
 sudo systemctl disable wazuh-manager 2>/dev/null || warn "wazuh-manager service not installed"
 sudo systemctl disable wazuh-dashboard 2>/dev/null || warn "wazuh-dashboard service not installed"
+sudo systemctl disable filebeat 2>/dev/null || warn "filebeat service not installed"
+sudo systemctl disable wazuh-agent 2>/dev/null || warn "wazuh-agent service not installed"
 
 # Remove Wazuh packages
 log "Removing Wazuh packages..."
@@ -74,6 +78,8 @@ packages_to_remove=(
     "wazuh-indexer"
     "wazuh-manager" 
     "wazuh-dashboard"
+    "filebeat"
+    "wazuh-agent"
 )
 
 for package in "${packages_to_remove[@]}"; do
@@ -95,12 +101,16 @@ log "Removing Wazuh configuration directories..."
 directories_to_remove=(
     "/etc/wazuh-indexer"
     "/etc/wazuh-dashboard" 
+    "/etc/filebeat"
     "/var/ossec"
     "/var/lib/wazuh-indexer"
+    "/var/lib/filebeat"
     "/var/log/wazuh-indexer"
     "/var/log/wazuh-dashboard"
+    "/var/log/filebeat"
     "/usr/share/wazuh-indexer"
     "/usr/share/wazuh-dashboard"
+    "/usr/share/filebeat"
     "/tmp/wazuh-install-files"
     "/tmp/wazuh-install"
 )
@@ -183,7 +193,10 @@ service_files=(
     "/usr/lib/systemd/system/wazuh-indexer.service"
     "/usr/lib/systemd/system/wazuh-manager.service"
     "/usr/lib/systemd/system/wazuh-dashboard.service"
+    "/usr/lib/systemd/system/filebeat.service"
+    "/usr/lib/systemd/system/wazuh-agent.service"
     "/etc/systemd/system/wazuh.service"
+    "/etc/systemd/system/filebeat.service"
 )
 
 for service_file in "${service_files[@]}"; do

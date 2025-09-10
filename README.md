@@ -345,6 +345,38 @@ curl -k https://localhost:9200/_cluster/health
 sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard nginx
 ```
 
+## Cleanup and Reinstallation
+
+If you need to completely remove Wazuh and start fresh, use the cleanup script:
+
+### Complete Cleanup
+```bash
+# Run the cleanup script to remove all Wazuh components
+./cleanup-wazuh.sh
+```
+
+### What the cleanup script removes:
+- ✅ All Wazuh services (indexer, manager, dashboard)
+- ✅ All Wazuh packages and dependencies
+- ✅ All configuration files and data
+- ✅ Wazuh system users and groups
+- ✅ Nginx Wazuh configuration
+- ✅ Systemd service files
+- ✅ Certificate renewal hooks
+
+### What is preserved:
+- 🔒 SSL certificates (/etc/letsencrypt/)
+- 🔒 Nginx service (continues running)
+- 🔒 System packages (curl, certbot, etc.)
+
+### After cleanup:
+```bash
+# Run the installation script again
+./install-wazuh.sh siem.yourdomain.com admin@yourdomain.com
+```
+
+The cleanup script includes confirmation prompts and detailed logging for safety.
+
 ## Platform Compatibility
 
 This script has been tested and works on:
