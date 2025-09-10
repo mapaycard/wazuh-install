@@ -1,10 +1,10 @@
 # Wazuh Installation Script
 
-This repository contains an automated installation script for deploying Wazuh on Debian-based VMs with full SSL/HTTPS configuration. Originally designed for GCP but works on any cloud provider including Hetzner, DigitalOcean, AWS, etc.
+This repository contains an automated installation script for deploying Wazuh on Debian-based VMs with full SSL/HTTPS configuration. Works on any cloud provider including Hetzner, DigitalOcean, GCP, AWS, Azure, and more.
 
 ## Overview
 
-The `install-wazuh-gcp.sh` script provides a complete, production-ready Wazuh installation with:
+The `install-wazuh.sh` script provides a complete, production-ready Wazuh installation with:
 - SSL/TLS encryption using Let's Encrypt certificates
 - Nginx reverse proxy for secure HTTPS access
 - Native package installation using official Wazuh installation assistant
@@ -14,7 +14,7 @@ The `install-wazuh-gcp.sh` script provides a complete, production-ready Wazuh in
 
 ## Prerequisites
 
-- Debian/Ubuntu-based VM (any cloud provider: GCP, Hetzner, DigitalOcean, AWS, etc.)
+- Debian/Ubuntu-based VM (any cloud provider: Hetzner, DigitalOcean, AWS, GCP, Azure, etc.)
 - Non-root user with sudo privileges
 - Internet connectivity
 - Domain name pointing to your VM's external IP
@@ -28,18 +28,18 @@ The `install-wazuh-gcp.sh` script provides a complete, production-ready Wazuh in
 - **Disk:** 160 GB+ SSD storage
 - **Network:** 100 Mbps+ bandwidth
 
-**Tested platforms:** GCP, Hetzner Cloud, DigitalOcean, AWS EC2
+**Tested platforms:** Hetzner Cloud, DigitalOcean, AWS EC2, GCP, Azure
 
 ## Quick Start
 
 1. Clone or download this repository to your VM
 2. Make the script executable:
    ```bash
-   chmod +x install-wazuh-gcp.sh
+   chmod +x install-wazuh.sh
    ```
 3. Run the installation with required parameters:
    ```bash
-   ./install-wazuh-gcp.sh <DOMAIN_NAME> <EMAIL>
+   ./install-wazuh.sh <DOMAIN_NAME> <EMAIL>
    ```
 
 ## Usage
@@ -48,7 +48,7 @@ The `install-wazuh-gcp.sh` script provides a complete, production-ready Wazuh in
 
 ### Installation Command
 ```bash
-./install-wazuh-gcp.sh wazuh.yourdomain.com admin@yourdomain.com
+./install-wazuh.sh wazuh.yourdomain.com admin@yourdomain.com
 ```
 
 ### Parameters
@@ -59,11 +59,11 @@ The `install-wazuh-gcp.sh` script provides a complete, production-ready Wazuh in
 The script will display usage instructions if parameters are missing:
 ```bash
 # Missing parameters
-./install-wazuh-gcp.sh
+./install-wazuh.sh
 
 # Output:
-ERROR: Usage: ./install-wazuh-gcp.sh <DOMAIN_NAME> <EMAIL>
-Example: ./install-wazuh-gcp.sh wazuh.yourdomain.com admin@yourdomain.com
+ERROR: Usage: ./install-wazuh.sh <DOMAIN_NAME> <EMAIL>
+Example: ./install-wazuh.sh wazuh.yourdomain.com admin@yourdomain.com
 ```
 
 ## What Gets Installed
@@ -351,8 +351,8 @@ This script has been tested and works on:
 
 | Platform | VM Type | Status | Notes |
 |----------|---------|--------|-------|
-| **GCP** | e2-standard-4 | ✅ Tested | Original target platform |
 | **Hetzner Cloud** | CPX31 (4vCPU/16GB) | ✅ Tested | Excellent performance with NVMe |
+| **GCP** | e2-standard-4 | ✅ Tested | Good performance and reliability |
 | **DigitalOcean** | 4vCPU/16GB Droplet | ✅ Compatible | Standard droplet works well |
 | **AWS EC2** | t3.xlarge | ✅ Compatible | Similar specs recommended |
 | **Azure** | Standard_D4s_v3 | ✅ Compatible | 4vCPU/16GB configuration |

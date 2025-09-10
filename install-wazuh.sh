@@ -62,7 +62,13 @@ sudo apt-get update && sudo apt-get upgrade -y
 
 # Install required packages
 log "Installing required packages..."
-sudo apt-get install -y curl apt-transport-https lsb-release gnupg2 software-properties-common wget
+# Check if software-properties-common is available (Ubuntu) or use alternatives (Debian)
+if apt-cache show software-properties-common >/dev/null 2>&1; then
+    sudo apt-get install -y curl apt-transport-https lsb-release gnupg2 software-properties-common wget
+else
+    # Debian doesn't have software-properties-common, use dirmngr instead
+    sudo apt-get install -y curl apt-transport-https lsb-release gnupg2 dirmngr wget ca-certificates
+fi
 
 # Install certbot for SSL certificates
 log "Installing Certbot for SSL certificates..."
@@ -127,31 +133,32 @@ server.ssl.key: /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
 uiSettings.overrides.defaultRoute: /app/wz-home
 EOF
 
-# Configure Wazuh Indexer SSL certificates
-log "Configuring SSL for Wazuh Indexer..."
+# Configure SSL certificates for Wazuh components
+log "Configuring SSL certificates..."
 
-# Stop Wazuh Indexer
-sudo systemctl stop wazuh-indexer
+# Stop services to configure certificates
+sudo systemctl stop wazuh-indexer 2>/dev/null || true
+sudo systemctl stop wazuh-dashboard 2>/dev/null || true
 
-# Update indexer configuration for custom SSL
+# Backup original indexer configuration
 sudo cp /etc/wazuh-indexer/opensearch.yml /etc/wazuh-indexer/opensearch.yml.backup
 
-# Create symbolic links to Let's Encrypt certificates for indexer
-sudo ln -sf /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem /etc/wazuh-indexer/certs/node.pem
-sudo ln -sf /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem /etc/wazuh-indexer/certs/node-key.pem
-sudo ln -sf /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem /etc/wazuh-indexer/certs/root-ca.pem
+# Ensure root-ca.pem exists (required by indexer configuration)
+if [ ! -f "/etc/wazuh-indexer/certs/root-ca.pem" ]; then
+    sudo cp /etc/wazuh-indexer/certs/admin.pem /etc/wazuh-indexer/certs/root-ca.pem
+fi
 
-# Set proper permissions for certificates
-sudo chown wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/certs/node.pem
-sudo chown wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/certs/node-key.pem
-sudo chown wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/certs/root-ca.pem
-sudo chmod 400 /etc/wazuh-indexer/certs/node-key.pem
+# Set proper permissions for indexer certificates
+sudo chown -R wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/certs/
+sudo chmod 755 /etc/wazuh-indexer/certs/
+sudo chmod 644 /etc/wazuh-indexer/certs/*.pem
+sudo chmod 600 /etc/wazuh-indexer/certs/*-key.pem
 
-# Also set permissions for dashboard
-sudo chown wazuh-dashboard:wazuh-dashboard /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-sudo chown wazuh-dashboard:wazuh-dashboard /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+# Set permissions for Let's Encrypt certificates (for dashboard use)
 sudo chmod 644 /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-sudo chmod 600 /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+sudo chmod 640 /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+sudo chgrp ssl-cert /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+sudo usermod -aG ssl-cert wazuh-dashboard
 
 # Install and configure Nginx reverse proxy
 log "Setting up Nginx reverse proxy..."
@@ -253,16 +260,12 @@ EOF
 # Create certificate renewal hook script
 sudo tee /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh > /dev/null <<EOF
 #!/bin/bash
-# Update certificate permissions
-chown wazuh-indexer:wazuh-indexer /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-chown wazuh-indexer:wazuh-indexer /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
-chown wazuh-dashboard:wazuh-dashboard /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-chown wazuh-dashboard:wazuh-dashboard /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+# Update certificate permissions for Let's Encrypt renewal
 chmod 644 /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-chmod 600 /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+chmod 640 /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
+chgrp ssl-cert /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
 
-# Restart services
-systemctl restart wazuh-indexer
+# Restart services that use certificates
 systemctl restart wazuh-dashboard
 systemctl restart nginx
 EOF
