@@ -146,7 +146,7 @@ rm -f wazuh-install.sh
 
 # Disable Wazuh repository to prevent unintended updates
 log "Disabling Wazuh repository to prevent unintended updates..."
-sed -i "s/^deb /#deb /" /etc/apt/sources.list.d/wazuh.list
+sudo sed -i "s/^deb /#deb /" /etc/apt/sources.list.d/wazuh.list
 sudo apt-get update
 
 # Display installation summary
