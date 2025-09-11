@@ -84,7 +84,7 @@ if [ -f "/tmp/wazuh-install-files/wazuh-passwords.txt" ]; then
     WAZUH_PASSWORDS_FILE="/tmp/wazuh-install-files/wazuh-passwords.txt"
 elif [ -f "wazuh-install-files.tar" ]; then
     log "Extracting password file from tar archive..."
-    tar -tf wazuh-install-files.tar
+    sudo tar -tf wazuh-install-files.tar
     WAZUH_PASSWORDS_FILE="wazuh-install-files.tar"
 else
     # Search for password file
@@ -143,6 +143,11 @@ fi
 # Clean up installation files
 log "Cleaning up installation files..."
 rm -f wazuh-install.sh
+
+# Disable Wazuh repository to prevent unintended updates
+log "Disabling Wazuh repository to prevent unintended updates..."
+sed -i "s/^deb /#deb /" /etc/apt/sources.list.d/wazuh.list
+sudo apt-get update
 
 # Display installation summary
 log "Wazuh installation completed!"
