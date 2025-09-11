@@ -173,6 +173,17 @@ done
 
 # Remove Nginx Wazuh configuration (only if SSL was configured)
 log "Removing Nginx Wazuh configuration..."
+if [ -f "/etc/nginx/sites-available/wazuh-redirect" ]; then
+    sudo rm -f /etc/nginx/sites-available/wazuh-redirect
+    log "Removed Nginx Wazuh redirect configuration"
+fi
+
+if [ -L "/etc/nginx/sites-enabled/wazuh-redirect" ]; then
+    sudo rm -f /etc/nginx/sites-enabled/wazuh-redirect
+    log "Removed Nginx Wazuh redirect symlink"
+fi
+
+# Also check for old wazuh config names
 if [ -f "/etc/nginx/sites-available/wazuh" ]; then
     sudo rm -f /etc/nginx/sites-available/wazuh
     log "Removed Nginx Wazuh site configuration"

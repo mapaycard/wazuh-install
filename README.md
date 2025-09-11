@@ -10,15 +10,15 @@ This repository provides two scripts for a complete Wazuh deployment:
 - Native package installation using official Wazuh installation assistant
 - All core Wazuh components (indexer, manager, dashboard)
 - Basic firewall configuration
-- HTTP access on port 5601
+- HTTPS access on port 443
 - Ready for immediate use
 
 ### 2. `configure-ssl.sh` - SSL Configuration
 - SSL/TLS encryption using Let's Encrypt certificates
-- Nginx reverse proxy for secure HTTPS access
-- Automatic certificate renewal
+- HTTP to HTTPS redirect configuration
+- Automatic certificate renewal with webroot method
 - Production-ready HTTPS setup
-- Security headers and optimizations
+- Direct dashboard access on port 443
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ This repository provides two scripts for a complete Wazuh deployment:
 - Debian/Ubuntu-based VM (any cloud provider: Hetzner, DigitalOcean, AWS, GCP, Azure, etc.)
 - Non-root user with sudo privileges
 - Internet connectivity
-- Ports 5601, 1514, 1515, and 55000 accessible
+- Ports 443, 1514, 1515, and 55000 accessible
 
 ### Additional for SSL Configuration:
 - Domain name pointing to your VM's external IP
@@ -50,8 +50,8 @@ This repository provides two scripts for a complete Wazuh deployment:
 # 1. Download and run base installation
 ./install-wazuh.sh
 
-# 2. Access Wazuh via HTTP
-# http://your-server-ip:5601
+# 2. Access Wazuh via HTTPS
+# https://your-server-ip
 ```
 
 ### Option B: Full Installation with SSL (HTTPS)
@@ -77,7 +77,7 @@ This repository provides two scripts for a complete Wazuh deployment:
 **What it does:**
 - Installs all Wazuh components
 - Configures basic firewall rules
-- Provides HTTP access on port 5601
+- Provides HTTPS access on port 443
 - Ready for immediate use
 
 ### 2. SSL Configuration (Optional)
@@ -92,9 +92,9 @@ This repository provides two scripts for a complete Wazuh deployment:
 
 **What it does:**
 - Generates Let's Encrypt SSL certificates
-- Configures Wazuh dashboard for HTTPS
-- Sets up Nginx reverse proxy
-- Enables automatic certificate renewal
+- Configures Wazuh dashboard for HTTPS with custom domain
+- Sets up HTTP to HTTPS redirect
+- Enables automatic certificate renewal with webroot method
 
 ### Error Handling
 ```bash
@@ -118,10 +118,10 @@ Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 
 ### SSL Components (configure-ssl.sh)
 - **Let's Encrypt certificates** - Free SSL/TLS certificates
-- **Nginx reverse proxy** - HTTPS termination and optimization
-- **Certbot** - Automatic certificate management
-- **Security headers** - HSTS, CSP, and other security enhancements
-- **Auto-renewal** - Automatic certificate renewal setup
+- **HTTP to HTTPS redirect** - Nginx-based automatic redirection
+- **Certbot** - Automatic certificate management with webroot
+- **Domain-specific SSL** - Custom domain SSL configuration
+- **Auto-renewal** - Zero-downtime certificate renewal
 
 ### Security Features
 - Secure password generation (base installation)
@@ -135,8 +135,8 @@ Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 ### After Base Installation
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Dashboard | `http://server-ip:5601` | admin / *generated-password* |
-| API | `http://server-ip:55000` | wazuh-wui / *generated-password* |
+| Dashboard | `https://server-ip` | admin / *generated-password* |
+| API | `https://server-ip:55000` | wazuh-wui / *generated-password* |
 
 ### After SSL Configuration
 | Service | URL | Credentials |

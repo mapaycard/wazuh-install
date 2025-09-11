@@ -246,8 +246,78 @@ else
     DASHBOARD_URL="https://$DOMAIN_NAME"
 fi
 
-# Setup automatic certificate renewal (optional enhancement)
+# Step 8: Configure HTTP to HTTPS redirect
+log "Step 8: Configuring HTTP to HTTPS redirect..."
+
+# Check if nginx is installed, if not install it
+if ! command -v nginx &> /dev/null; then
+    log "Installing Nginx for HTTP redirect..."
+    sudo apt-get update
+    sudo apt-get install -y nginx
+fi
+
+# Create Nginx configuration for HTTP redirect
+sudo tee /etc/nginx/sites-available/wazuh-redirect > /dev/null <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN_NAME;
+    
+    # Redirect all HTTP traffic to HTTPS
+    return 301 https://\$host\$request_uri;
+}
+EOF
+
+# Enable the site
+sudo ln -sf /etc/nginx/sites-available/wazuh-redirect /etc/nginx/sites-enabled/wazuh-redirect
+
+# Disable default nginx site to avoid conflicts (keep file for potential restoration)
+if [ -L "/etc/nginx/sites-enabled/default" ]; then
+    sudo rm /etc/nginx/sites-enabled/default
+    log "Disabled default Nginx site"
+fi
+
+# Test nginx configuration
+if sudo nginx -t; then
+    sudo systemctl restart nginx
+    sudo systemctl enable nginx
+    log "HTTP to HTTPS redirect configured successfully"
+else
+    warn "Nginx configuration test failed, skipping HTTP redirect setup"
+fi
+
+# Setup automatic certificate renewal with webroot method
 log "Setting up automatic certificate renewal..."
+
+# Create webroot directory for certificate renewal
+sudo mkdir -p /var/www/certbot
+
+# Update Nginx configuration to serve ACME challenges
+sudo tee /etc/nginx/sites-available/wazuh-redirect > /dev/null <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN_NAME;
+    
+    # Allow ACME challenges for certificate renewal
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    
+    # Redirect all other HTTP traffic to HTTPS
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+
+# Restart Nginx to apply the updated configuration
+sudo systemctl reload nginx
+
+# Update certificate renewal configuration to use webroot
+if [ -f "/etc/letsencrypt/renewal/$DOMAIN_NAME.conf" ]; then
+    # Update existing renewal config to use webroot
+    sudo sed -i 's/authenticator = standalone/authenticator = webroot/' "/etc/letsencrypt/renewal/$DOMAIN_NAME.conf"
+    sudo sed -i '/authenticator = webroot/a webroot_path = /var/www/certbot' "/etc/letsencrypt/renewal/$DOMAIN_NAME.conf"
+fi
 
 # Test certificate renewal (dry run)
 if sudo certbot renew --dry-run --quiet; then
@@ -275,9 +345,9 @@ EOF
 0 12 * * * root certbot renew --quiet
 EOF
     
-    log "Automatic certificate renewal configured"
+    log "Automatic certificate renewal configured with webroot method"
 else
-    warn "Certificate renewal test failed - manual renewal may be required"
+    warn "Certificate renewal test failed - you may need to renew certificates manually"
 fi
 
 # Get server IP
