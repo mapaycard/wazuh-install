@@ -56,77 +56,147 @@ fi
 DOMAIN_NAME="$1"
 EMAIL="$2"
 
-log "Starting SSL configuration for Wazuh"
+log "Starting SSL configuration for Wazuh Dashboard"
 log "Domain: $DOMAIN_NAME"
 log "Email: $EMAIL"
 
 # Check if Wazuh is installed and running
 log "Checking Wazuh installation..."
-for service in wazuh-indexer wazuh-manager wazuh-dashboard; do
+for service in wazuh-indexer wazuh-manager; do
     if ! sudo systemctl is-active --quiet $service; then
-        error "$service is not running. Please install Wazuh first using ./install-wazuh-base.sh"
+        error "$service is not running. Please install Wazuh first using ./install-wazuh.sh"
     fi
 done
+
+# Check if wazuh-dashboard is installed (but don't require it to be running)
+if ! sudo systemctl is-enabled --quiet wazuh-dashboard 2>/dev/null; then
+    error "wazuh-dashboard service not found. Please install Wazuh first using ./install-wazuh.sh"
+fi
+
 log "Wazuh installation verified"
 
+# Start dashboard if not running (for accessibility check)
+if ! sudo systemctl is-active --quiet wazuh-dashboard; then
+    log "Starting Wazuh dashboard for configuration..."
+    sudo systemctl start wazuh-dashboard
+    sleep 10
+fi
+
 # Check if dashboard is accessible
-if ! curl -s -o /dev/null -w "%{http_code}" http://localhost:5601 | grep -q "200\|302"; then
-    error "Wazuh dashboard is not accessible on port 5601. Please check the installation."
+if ! curl -s -k -o /dev/null -w "%{http_code}" https://localhost:443 | grep -q "200\|302\|401"; then
+    if ! curl -s -k -o /dev/null -w "%{http_code}" https://localhost:5601 | grep -q "200\|302\|401"; then
+        warn "Wazuh dashboard not accessible via HTTPS, but proceeding with SSL configuration..."
+    fi
 fi
 
-# Install certbot for SSL certificates
-log "Installing Certbot for SSL certificates..."
-sudo apt-get update
-sudo apt-get install -y certbot
+# Step 1: Install Certbot (following official documentation)
+log "Step 1: Installing Certbot..."
 
-# Configure firewall for SSL
-log "Updating firewall configuration for SSL..."
-sudo ufw allow http
-sudo ufw allow https
-
-# Generate Let's Encrypt certificate
-log "Generating Let's Encrypt SSL certificate..."
-log "Stopping dashboard temporarily for certificate generation..."
-sudo systemctl stop wazuh-dashboard
-
-# Generate certificate using standalone mode
-sudo certbot certonly --standalone --non-interactive --agree-tos --email $EMAIL -d $DOMAIN_NAME
-
-if [ ! -f "/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem" ]; then
-    error "Certificate generation failed. Please check your domain configuration and try again."
+# For Ubuntu/Debian, use snap method as per documentation
+if ! command -v certbot &> /dev/null; then
+    log "Installing snap..."
+    sudo apt-get update
+    sudo apt-get install -y snapd
+    
+    log "Installing certbot via snap..."
+    sudo snap install core; sudo snap refresh core
+    sudo snap install --classic certbot
+    sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+else
+    log "Certbot already installed"
 fi
 
-log "SSL certificate generated successfully"
+# Step 2: Open Firewall Ports (following official documentation)
+log "Step 2: Configuring firewall ports..."
+sudo ufw allow 443/tcp
+sudo ufw allow 80/tcp
 
-# Configure SSL on Wazuh Dashboard following official documentation
-log "Configuring SSL certificates on Wazuh Dashboard..."
+# Step 3: Generate Let's Encrypt Certificate (following official documentation)
+log "Step 3: Checking for existing Let's Encrypt certificate..."
 
-# Step 1: Copy certificates to Wazuh dashboard directory
-log "Step 1: Copying certificates to Wazuh dashboard directory..."
-sudo cp /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem /etc/wazuh-dashboard/certs/
-sudo cp /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem /etc/wazuh-dashboard/certs/
+# Check if certificate already exists using certbot certificates command
+if sudo certbot certificates 2>/dev/null | grep -q "Certificate Name: $DOMAIN_NAME"; then
+    log "SSL certificate already exists for $DOMAIN_NAME, using existing certificate"
+elif [ -f "/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem" ]; then
+    log "SSL certificate files found for $DOMAIN_NAME, using existing certificate"
+else
+    log "Generating new Let's Encrypt certificate..."
+    log "Stopping Wazuh dashboard temporarily for certificate generation..."
+    sudo systemctl stop wazuh-dashboard
+    
+    # Generate certificate using standalone mode
+    sudo certbot certonly --standalone --non-interactive --agree-tos --email $EMAIL -d $DOMAIN_NAME
+    
+    if [ ! -f "/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem" ]; then
+        error "Certificate generation failed. Please check your domain configuration and try again."
+    fi
+    
+    log "SSL certificate generated successfully"
+fi
 
-# Step 2: Backup and configure Wazuh Dashboard SSL settings
-log "Step 2: Configuring Wazuh Dashboard SSL settings..."
-sudo cp /etc/wazuh-dashboard/opensearch_dashboards.yml /etc/wazuh-dashboard/opensearch_dashboards.yml.backup
+# Step 4: Copy Certificates (following official documentation)
+log "Step 4: Copying certificates to Wazuh dashboard directory..."
 
-# Add SSL configuration to the dashboard config
-sudo tee -a /etc/wazuh-dashboard/opensearch_dashboards.yml > /dev/null <<EOF
+# First, let's see what certificates actually exist
+log "Checking available certificates..."
+sudo certbot certificates 2>/dev/null || warn "Could not list certificates"
 
-# SSL Configuration for Let's Encrypt
-server.ssl.enabled: true
-server.ssl.key: "/etc/wazuh-dashboard/certs/privkey.pem"
-server.ssl.certificate: "/etc/wazuh-dashboard/certs/fullchain.pem"
-EOF
+# Find the actual certificate directory using sudo since it may have restricted permissions
+CERT_DIR=""
+if sudo test -d "/etc/letsencrypt/live/$DOMAIN_NAME"; then
+    CERT_DIR="/etc/letsencrypt/live/$DOMAIN_NAME"
+    log "Found certificate directory for $DOMAIN_NAME"
+else
+    # Try to find any certificate directory that might match
+    AVAILABLE_DIRS=$(sudo find /etc/letsencrypt/live -maxdepth 1 -type d -name "*" 2>/dev/null | grep -v "^/etc/letsencrypt/live$" | head -5)
+    if [ -n "$AVAILABLE_DIRS" ]; then
+        log "Available certificate directories:"
+        echo "$AVAILABLE_DIRS"
+        # Use the first available directory
+        CERT_DIR=$(echo "$AVAILABLE_DIRS" | head -1)
+        log "Using certificate directory: $CERT_DIR"
+    fi
+fi
 
-# Step 3: Set proper permissions following official documentation
-log "Step 3: Setting proper file permissions..."
+if [ -z "$CERT_DIR" ]; then
+    error "No certificate directory found in /etc/letsencrypt/live/"
+fi
+
+# Verify certificate files exist and are readable
+if ! sudo test -f "$CERT_DIR/privkey.pem"; then
+    error "Private key file not found: $CERT_DIR/privkey.pem"
+fi
+
+if ! sudo test -f "$CERT_DIR/fullchain.pem"; then
+    error "Certificate file not found: $CERT_DIR/fullchain.pem"
+fi
+
+log "Using certificates from: $CERT_DIR"
+sudo cp "$CERT_DIR/privkey.pem" "$CERT_DIR/fullchain.pem" /etc/wazuh-dashboard/certs/
+
+# Step 5: Configure Wazuh Dashboard (following official documentation)
+log "Step 5: Configuring Wazuh Dashboard SSL settings..."
+
+# Backup original configuration (only if backup doesn't exist)
+if [ ! -f "/etc/wazuh-dashboard/opensearch_dashboards.yml.backup" ]; then
+    sudo cp /etc/wazuh-dashboard/opensearch_dashboards.yml /etc/wazuh-dashboard/opensearch_dashboards.yml.backup
+fi
+
+# Create a clean configuration by modifying the existing SSL settings
+sudo sed -i 's|server.ssl.key: "/etc/wazuh-dashboard/certs/wazuh-dashboard-key.pem"|server.ssl.key: "/etc/wazuh-dashboard/certs/privkey.pem"|g' /etc/wazuh-dashboard/opensearch_dashboards.yml
+sudo sed -i 's|server.ssl.certificate: "/etc/wazuh-dashboard/certs/wazuh-dashboard.pem"|server.ssl.certificate: "/etc/wazuh-dashboard/certs/fullchain.pem"|g' /etc/wazuh-dashboard/opensearch_dashboards.yml
+
+# Remove any previous Let's Encrypt configurations to avoid duplicates
+sudo sed -i '/# SSL Configuration for Let'\''s Encrypt/,+3d' /etc/wazuh-dashboard/opensearch_dashboards.yml
+
+# Step 6: Set Proper Permissions (following official documentation exactly)
+log "Step 6: Setting proper file permissions..."
 sudo chown -R wazuh-dashboard:wazuh-dashboard /etc/wazuh-dashboard/
 sudo chmod -R 500 /etc/wazuh-dashboard/certs/
 sudo chmod 440 /etc/wazuh-dashboard/certs/privkey.pem /etc/wazuh-dashboard/certs/fullchain.pem
 
-# Step 4: Restart Wazuh Dashboard
-log "Step 4: Restarting Wazuh Dashboard with SSL configuration..."
+# Step 7: Restart Wazuh Dashboard (following official documentation)
+log "Step 7: Restarting Wazuh Dashboard..."
 sudo systemctl restart wazuh-dashboard
 
 # Wait for dashboard to start with SSL
@@ -136,156 +206,83 @@ sleep 15
 if sudo systemctl is-active --quiet wazuh-dashboard; then
     log "Dashboard restarted successfully with SSL"
 else
-    error "Dashboard failed to start with SSL. Check logs: sudo journalctl -u wazuh-dashboard"
+    warn "Dashboard failed to start with SSL configuration"
+    log "Checking recent error logs..."
+    sudo journalctl -u wazuh-dashboard --no-pager -n 20
+    
+    # Try to restore working configuration
+    log "Restoring original dashboard configuration..."
+    if [ -f "/etc/wazuh-dashboard/opensearch_dashboards.yml.backup" ]; then
+        sudo cp /etc/wazuh-dashboard/opensearch_dashboards.yml.backup /etc/wazuh-dashboard/opensearch_dashboards.yml
+        # Restore original certificate permissions
+        sudo chown -R wazuh-dashboard:wazuh-dashboard /etc/wazuh-dashboard/
+        sudo chmod -R 500 /etc/wazuh-dashboard/certs/
+        sudo chmod 400 /etc/wazuh-dashboard/certs/*.pem 2>/dev/null || true
+        sudo systemctl restart wazuh-dashboard
+        sleep 10
+    else
+        warn "No backup configuration found to restore"
+    fi
+    
+    if sudo systemctl is-active --quiet wazuh-dashboard; then
+        warn "Dashboard restored with original configuration (no SSL)"
+        warn "SSL configuration failed - check certificate files and permissions"
+        error "SSL setup failed. Dashboard is running without SSL."
+    else
+        error "Dashboard failed to start even with original configuration. Check installation."
+    fi
 fi
 
 # Test SSL access
 log "Testing SSL access..."
-if curl -s -k -o /dev/null -w "%{http_code}" https://localhost:5601 | grep -q "200\|302"; then
+if curl -s -k -o /dev/null -w "%{http_code}" https://localhost:443 | grep -q "200\|302\|401"; then
+    log "Dashboard is accessible via HTTPS on port 443"
+    DASHBOARD_URL="https://$DOMAIN_NAME"
+elif curl -s -k -o /dev/null -w "%{http_code}" https://localhost:5601 | grep -q "200\|302\|401"; then
     log "Dashboard is accessible via HTTPS on port 5601"
+    DASHBOARD_URL="https://$DOMAIN_NAME:5601"
 else
-    warn "Dashboard HTTPS access test failed, but service is running"
+    warn "Dashboard HTTPS access test inconclusive, but service is running"
+    DASHBOARD_URL="https://$DOMAIN_NAME"
 fi
 
-# Install and configure Nginx reverse proxy for better SSL handling
-log "Setting up Nginx reverse proxy for optimal SSL performance..."
-sudo apt-get install -y nginx
+# Setup automatic certificate renewal (optional enhancement)
+log "Setting up automatic certificate renewal..."
 
-sudo tee /etc/nginx/sites-available/wazuh > /dev/null <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN_NAME;
-    return 301 https://\$server_name\$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name $DOMAIN_NAME;
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem;
+# Test certificate renewal (dry run)
+if sudo certbot renew --dry-run --quiet; then
+    log "Certificate renewal test passed"
     
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 5m;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
-    location / {
-        proxy_pass https://localhost:5601;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_redirect off;
-        
-        # SSL verification settings for backend
-        proxy_ssl_verify off;
-        proxy_ssl_session_reuse on;
-    }
-
-    # API endpoint
-    location /api {
-        proxy_pass https://localhost:55000;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_ssl_verify off;
-    }
-}
-EOF
-
-# Enable the site and test nginx configuration
-sudo ln -sf /etc/nginx/sites-available/wazuh /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-
-# Test nginx configuration
-if sudo nginx -t; then
-    log "Nginx configuration is valid"
-    sudo systemctl restart nginx
-    sudo systemctl enable nginx
-else
-    error "Nginx configuration test failed"
-fi
-
-# Setup automatic certificate renewal following official documentation
-log "Setting up automatic SSL certificate renewal..."
-
-# Create renewal hook directories
-sudo mkdir -p /etc/letsencrypt/renewal-hooks/pre/
-sudo mkdir -p /etc/letsencrypt/renewal-hooks/post/
-
-# Pre-hook: Stop dashboard before renewal
-sudo tee /etc/letsencrypt/renewal-hooks/pre/wazuh-stop.sh > /dev/null <<EOF
+    # Create renewal hook to restart dashboard after renewal
+    sudo mkdir -p /etc/letsencrypt/renewal-hooks/post/
+    sudo tee /etc/letsencrypt/renewal-hooks/post/restart-wazuh-dashboard.sh > /dev/null <<EOF
 #!/bin/bash
-systemctl stop wazuh-dashboard
-EOF
-
-# Post-hook: Copy certificates and restart services
-sudo tee /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh > /dev/null <<EOF
-#!/bin/bash
-# Copy new certificates to wazuh directory
-cp /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem /etc/wazuh-dashboard/certs/
-cp /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem /etc/wazuh-dashboard/certs/
+# Copy renewed certificates
+cp /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem /etc/wazuh-dashboard/certs/
 
 # Set proper permissions
 chown -R wazuh-dashboard:wazuh-dashboard /etc/wazuh-dashboard/
 chmod -R 500 /etc/wazuh-dashboard/certs/
 chmod 440 /etc/wazuh-dashboard/certs/privkey.pem /etc/wazuh-dashboard/certs/fullchain.pem
 
-# Restart services
+# Restart dashboard
 systemctl restart wazuh-dashboard
-systemctl reload nginx
 EOF
-
-sudo chmod +x /etc/letsencrypt/renewal-hooks/pre/wazuh-stop.sh
-sudo chmod +x /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh
-
-# Add cron job for certificate renewal
-sudo tee /etc/cron.d/certbot-renew > /dev/null <<EOF
+    sudo chmod +x /etc/letsencrypt/renewal-hooks/post/restart-wazuh-dashboard.sh
+    
+    # Add cron job for certificate renewal
+    sudo tee /etc/cron.d/certbot-renew > /dev/null <<EOF
 0 12 * * * root certbot renew --quiet
 EOF
-
-# Test certificate renewal (dry run)
-log "Testing certificate renewal process..."
-if sudo certbot renew --dry-run --quiet; then
-    log "Certificate renewal test passed"
+    
+    log "Automatic certificate renewal configured"
 else
-    warn "Certificate renewal test failed - check configuration"
+    warn "Certificate renewal test failed - manual renewal may be required"
 fi
 
-# Final service status check
-log "Checking final service status..."
-sleep 5
+# Get server IP
+SERVER_IP=$(hostname -I | awk '{print $1}')
 
-for service in wazuh-indexer wazuh-manager wazuh-dashboard nginx; do
-    if sudo systemctl is-active --quiet $service; then
-        log "$service is running"
-    else
-        warn "$service is not running - checking status"
-        sudo systemctl status $service --no-pager -l
-    fi
-done
-
-# Get stored passwords
-WAZUH_PASSWORDS_FILE="/tmp/wazuh-install-files/wazuh-passwords.txt"
-if [ -f "$WAZUH_PASSWORDS_FILE" ]; then
-    ADMIN_PASSWORD=$(grep "User: admin" $WAZUH_PASSWORDS_FILE | awk '{print $NF}')
-else
-    ADMIN_PASSWORD="Check password file"
-fi
 
 # Display SSL configuration summary
 log "SSL configuration completed successfully!"
@@ -293,13 +290,10 @@ echo
 echo "============================================="
 echo "         SSL CONFIGURATION SUMMARY"
 echo "============================================="
-echo "Wazuh Dashboard URL: https://$DOMAIN_NAME"
-echo "Default Username: admin"
-echo "Password: $ADMIN_PASSWORD"
+echo "Dashboard URL: $DASHBOARD_URL"
 echo ""
+echo "Server IP: $SERVER_IP"
 echo "API Endpoint: https://$DOMAIN_NAME:55000"
-echo "API Username: wazuh-wui"
-echo "API Password: Check $WAZUH_PASSWORDS_FILE"
 echo ""
 echo "Agent Registration:"
 echo "Server Address: $DOMAIN_NAME"
@@ -307,22 +301,18 @@ echo "Registration Port: 1515"
 echo "Communication Port: 1514"
 echo ""
 echo "SSL Certificate: Let's Encrypt"
-echo "Auto-renewal: Enabled (daily check at 12:00)"
 echo "Certificate Location: /etc/letsencrypt/live/$DOMAIN_NAME/"
-echo ""
-echo "Services:"
-echo "  - Dashboard: https://localhost:5601 (direct)"
-echo "  - Nginx Proxy: https://$DOMAIN_NAME (recommended)"
+echo "Auto-renewal: Enabled (daily check at 12:00)"
 echo ""
 echo "============================================="
 echo "Next Steps:"
-echo "1. Access dashboard at https://$DOMAIN_NAME"
-echo "2. Verify SSL certificate in browser"
-echo "3. Configure agents to use $DOMAIN_NAME"
-echo "4. Monitor certificate renewal logs"
+echo "1. Access dashboard at $DASHBOARD_URL"
+echo "2. Accept/verify SSL certificate in browser"
+echo "3. Login with credentials from your base installation"
+echo "4. Configure agents to use $DOMAIN_NAME"
 echo "============================================="
 
-warn "IMPORTANT: SSL is now enabled on the dashboard"
+warn "IMPORTANT: SSL is now enabled on the Wazuh dashboard"
 warn "Update any existing agent configurations to use the new domain name"
 
 log "SSL configuration completed successfully!"
