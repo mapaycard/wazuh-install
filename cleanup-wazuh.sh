@@ -115,6 +115,17 @@ directories_to_remove=(
     "/tmp/wazuh-install"
 )
 
+# Also check for installation files in current directory
+if [ -f "wazuh-install-files.tar" ]; then
+    log "Removing installation tar file"
+    rm -f wazuh-install-files.tar
+fi
+
+if [ -f "wazuh-install.sh" ]; then
+    log "Removing installation script"  
+    rm -f wazuh-install.sh
+fi
+
 for dir in "${directories_to_remove[@]}"; do
     if [ -d "$dir" ]; then
         log "Removing directory: $dir"
@@ -160,7 +171,7 @@ for group in "${groups_to_remove[@]}"; do
     fi
 done
 
-# Remove Nginx Wazuh configuration
+# Remove Nginx Wazuh configuration (only if SSL was configured)
 log "Removing Nginx Wazuh configuration..."
 if [ -f "/etc/nginx/sites-available/wazuh" ]; then
     sudo rm -f /etc/nginx/sites-available/wazuh
@@ -172,19 +183,24 @@ if [ -L "/etc/nginx/sites-enabled/wazuh" ]; then
     log "Removed Nginx Wazuh site symlink"
 fi
 
-# Restore default Nginx site if it was removed
-if [ ! -L "/etc/nginx/sites-enabled/default" ] && [ -f "/etc/nginx/sites-available/default" ]; then
-    sudo ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
-    log "Restored default Nginx site"
-fi
+# Only handle Nginx if it was installed for Wazuh SSL configuration
+if command -v nginx &> /dev/null; then
+    # Restore default Nginx site if it was removed
+    if [ ! -L "/etc/nginx/sites-enabled/default" ] && [ -f "/etc/nginx/sites-available/default" ]; then
+        sudo ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+        log "Restored default Nginx site"
+    fi
 
-# Test and restart Nginx
-log "Testing and restarting Nginx..."
-if sudo nginx -t 2>/dev/null; then
-    sudo systemctl restart nginx
-    log "Nginx restarted successfully"
+    # Test and restart Nginx
+    log "Testing and restarting Nginx..."
+    if sudo nginx -t 2>/dev/null; then
+        sudo systemctl restart nginx
+        log "Nginx restarted successfully"
+    else
+        warn "Nginx configuration test failed, you may need to fix manually"
+    fi
 else
-    warn "Nginx configuration test failed, you may need to fix manually"
+    log "Nginx not installed, skipping configuration cleanup"
 fi
 
 # Remove systemd service files
@@ -209,11 +225,16 @@ done
 # Reload systemd daemon
 sudo systemctl daemon-reload
 
-# Remove certificate renewal hooks for Wazuh
+# Remove certificate renewal hooks for Wazuh (if SSL was configured)
 log "Removing Wazuh certificate renewal hooks..."
 if [ -f "/etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh" ]; then
     sudo rm -f /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh
     log "Removed Wazuh certificate renewal hook"
+fi
+
+if [ -f "/etc/letsencrypt/renewal-hooks/pre/wazuh-stop.sh" ]; then
+    sudo rm -f /etc/letsencrypt/renewal-hooks/pre/wazuh-stop.sh
+    log "Removed Wazuh pre-renewal hook"
 fi
 
 # Remove cron jobs

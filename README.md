@@ -1,24 +1,37 @@
-# Wazuh Installation Script
+# Wazuh Installation Scripts
 
-This repository contains an automated installation script for deploying Wazuh on Debian-based VMs with full SSL/HTTPS configuration. Works on any cloud provider including Hetzner, DigitalOcean, GCP, AWS, Azure, and more.
+This repository contains automated installation scripts for deploying Wazuh on Debian-based VMs. The installation is split into two modular scripts for better flexibility and troubleshooting. Works on any cloud provider including Hetzner, DigitalOcean, GCP, AWS, Azure, and more.
 
 ## Overview
 
-The `install-wazuh.sh` script provides a complete, production-ready Wazuh installation with:
+This repository provides two scripts for a complete Wazuh deployment:
+
+### 1. `install-wazuh.sh` - Base Installation
+- Native package installation using official Wazuh installation assistant
+- All core Wazuh components (indexer, manager, dashboard)
+- Basic firewall configuration
+- HTTP access on port 5601
+- Ready for immediate use
+
+### 2. `configure-ssl.sh` - SSL Configuration
 - SSL/TLS encryption using Let's Encrypt certificates
 - Nginx reverse proxy for secure HTTPS access
-- Native package installation using official Wazuh installation assistant
 - Automatic certificate renewal
-- Firewall configuration
-- Systemd service integration
+- Production-ready HTTPS setup
+- Security headers and optimizations
 
 ## Prerequisites
 
+### For Base Installation:
 - Debian/Ubuntu-based VM (any cloud provider: Hetzner, DigitalOcean, AWS, GCP, Azure, etc.)
 - Non-root user with sudo privileges
 - Internet connectivity
+- Ports 5601, 1514, 1515, and 55000 accessible
+
+### Additional for SSL Configuration:
 - Domain name pointing to your VM's external IP
-- Ports 80, 443, 1514, 1515, and 55000 accessible
+- Ports 80 and 443 accessible from the internet
+- Valid email address for Let's Encrypt registration
 
 ## Server Requirements
 
@@ -32,65 +45,100 @@ The `install-wazuh.sh` script provides a complete, production-ready Wazuh instal
 
 ## Quick Start
 
-1. Clone or download this repository to your VM
-2. Make the script executable:
-   ```bash
-   chmod +x install-wazuh.sh
-   ```
-3. Run the installation with required parameters:
-   ```bash
-   ./install-wazuh.sh <DOMAIN_NAME> <EMAIL>
-   ```
+### Option A: Basic Installation (HTTP)
+```bash
+# 1. Download and run base installation
+./install-wazuh.sh
+
+# 2. Access Wazuh via HTTP
+# http://your-server-ip:5601
+```
+
+### Option B: Full Installation with SSL (HTTPS)
+```bash
+# 1. Install Wazuh base
+./install-wazuh.sh
+
+# 2. Configure SSL (requires domain name)
+./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
+
+# 3. Access Wazuh via HTTPS
+# https://wazuh.yourdomain.com
+```
 
 ## Usage
 
-**⚠️ IMPORTANT:** Domain name and email are now **required parameters**
-
-### Installation Command
+### 1. Base Wazuh Installation
 ```bash
-./install-wazuh.sh wazuh.yourdomain.com admin@yourdomain.com
+# No parameters required
+./install-wazuh.sh
 ```
 
-### Parameters
+**What it does:**
+- Installs all Wazuh components
+- Configures basic firewall rules
+- Provides HTTP access on port 5601
+- Ready for immediate use
+
+### 2. SSL Configuration (Optional)
+```bash
+# Requires domain and email
+./configure-ssl.sh <DOMAIN_NAME> <EMAIL>
+```
+
+**Parameters:**
 - **DOMAIN_NAME** - Fully qualified domain name (e.g., wazuh.yourdomain.com)
 - **EMAIL** - Email address for Let's Encrypt certificate registration
 
+**What it does:**
+- Generates Let's Encrypt SSL certificates
+- Configures Wazuh dashboard for HTTPS
+- Sets up Nginx reverse proxy
+- Enables automatic certificate renewal
+
 ### Error Handling
-The script will display usage instructions if parameters are missing:
 ```bash
-# Missing parameters
-./install-wazuh.sh
+# SSL script will show usage if parameters missing
+./configure-ssl.sh
 
 # Output:
-ERROR: Usage: ./install-wazuh.sh <DOMAIN_NAME> <EMAIL>
-Example: ./install-wazuh.sh wazuh.yourdomain.com admin@yourdomain.com
+ERROR: Usage: ./configure-ssl.sh <DOMAIN_NAME> <EMAIL>
+Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 ```
 
 ## What Gets Installed
 
-### Core Components
+### Core Components (install-wazuh.sh)
 - **Wazuh Manager**: Security data processing and alert generation
 - **Wazuh Indexer**: Data storage and search (OpenSearch-based)
 - **Wazuh Dashboard**: Web interface for security monitoring
-- **Nginx**: Reverse proxy for HTTPS termination
-- **Certbot**: SSL certificate management
-
-### Installation Method
 - **Native packages** - Uses official Wazuh installation assistant
 - **Systemd services** - Standard Linux service management
-- **Direct OS integration** - No containerization overhead
+- **UFW firewall** - Basic port configuration
+
+### SSL Components (configure-ssl.sh)
+- **Let's Encrypt certificates** - Free SSL/TLS certificates
+- **Nginx reverse proxy** - HTTPS termination and optimization
+- **Certbot** - Automatic certificate management
+- **Security headers** - HSTS, CSP, and other security enhancements
+- **Auto-renewal** - Automatic certificate renewal setup
 
 ### Security Features
-- Let's Encrypt SSL certificates with automatic renewal
-- TLS 1.2/1.3 encryption
+- Secure password generation (base installation)
+- Let's Encrypt SSL certificates with automatic renewal (SSL script)
+- TLS 1.2/1.3 encryption (SSL script)
 - UFW firewall configuration
-- Secure password generation
-- Security headers and hardening
+- Security headers and hardening (SSL script)
 
 ## Access Information
 
-After installation, you can access Wazuh at:
+### After Base Installation
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Dashboard | `http://server-ip:5601` | admin / *generated-password* |
+| API | `http://server-ip:55000` | wazuh-wui / *generated-password* |
 
+### After SSL Configuration
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Dashboard | `https://your-domain` | admin / *generated-password* |
@@ -114,7 +162,7 @@ The installation configures the following ports:
 
 ## Post-Installation Steps
 
-### 1. Save Generated Passwords
+### 1. Save Generated Passwords (After Base Installation)
 ```bash
 # Copy the password file to a secure location
 sudo cp /tmp/wazuh-install-files/wazuh-passwords.txt ~/wazuh-passwords-backup.txt
@@ -124,6 +172,12 @@ sudo chmod 600 ~/wazuh-passwords-backup.txt
 cat /tmp/wazuh-install-files/wazuh-passwords.txt
 ```
 
+### 1a. Configure SSL (Optional)
+```bash
+# If you want HTTPS access, run the SSL configuration
+./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
+```
+
 ### 2. Configure Agents
 Use the following information to register agents:
 - **Server Address**: Your domain or IP
@@ -131,19 +185,27 @@ Use the following information to register agents:
 - **Communication Port**: 1514
 
 ### 3. Verify Installation
+
+#### Base Installation Verification
 ```bash
 # Check all Wazuh services
 sudo systemctl status wazuh-manager
 sudo systemctl status wazuh-indexer  
 sudo systemctl status wazuh-dashboard
 
+# Test HTTP dashboard access
+curl -s http://localhost:5601
+```
+
+#### SSL Installation Verification (if configured)
+```bash
 # Check Nginx status
 sudo systemctl status nginx
 
 # Check SSL certificate
 sudo certbot certificates
 
-# Test dashboard access
+# Test HTTPS dashboard access
 curl -k https://your-domain/app/wazuh
 ```
 
@@ -360,9 +422,9 @@ If you need to completely remove Wazuh and start fresh, use the cleanup script:
 - ✅ All Wazuh packages and dependencies
 - ✅ All configuration files and data
 - ✅ Wazuh system users and groups
-- ✅ Nginx Wazuh configuration
+- ✅ Nginx Wazuh configuration (if SSL was configured)
 - ✅ Systemd service files
-- ✅ Certificate renewal hooks
+- ✅ Certificate renewal hooks (if SSL was configured)
 
 ### What is preserved:
 - 🔒 SSL certificates (/etc/letsencrypt/)
@@ -371,8 +433,11 @@ If you need to completely remove Wazuh and start fresh, use the cleanup script:
 
 ### After cleanup:
 ```bash
-# Run the installation script again
-./install-wazuh.sh siem.yourdomain.com admin@yourdomain.com
+# Run the base installation script
+./install-wazuh.sh
+
+# Then optionally configure SSL
+./configure-ssl.sh siem.yourdomain.com admin@yourdomain.com
 ```
 
 The cleanup script includes confirmation prompts and detailed logging for safety.
@@ -399,10 +464,21 @@ This script has been tested and works on:
 
 This installation script is provided under the MIT License. Wazuh itself is licensed under the GNU General Public License version 2.
 
+## Script Structure
+
+```
+wazuh/
+├── install-wazuh.sh      # Base Wazuh installation (HTTP)
+├── configure-ssl.sh      # SSL configuration (HTTPS)
+├── cleanup-wazuh.sh      # Complete removal script
+└── README.md            # This documentation
+```
+
 ## Contributing
 
-Contributions to improve this installation script are welcome. Please ensure:
+Contributions to improve these installation scripts are welcome. Please ensure:
 - Test changes on a fresh VM
+- Test both base installation and SSL configuration
 - Update documentation accordingly
 - Follow security best practices
 - Include proper error handling

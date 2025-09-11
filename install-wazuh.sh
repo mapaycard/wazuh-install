@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Wazuh Installation Script for Debian-based GCP VM with SSL Configuration
-# This script installs Wazuh using the official installation assistant with SSL/HTTPS configuration
+# Wazuh Installation Script
+# Following official documentation: https://documentation.wazuh.com/current/quickstart.html
 
 set -e
 
@@ -35,26 +35,7 @@ if ! command -v apt-get &> /dev/null; then
     error "This script is designed for Debian/Ubuntu systems only."
 fi
 
-# Check for required parameters
-if [ -z "$1" ] || [ -z "$2" ]; then
-    error "Usage: $0 <DOMAIN_NAME> <EMAIL>
-    
-Example: $0 wazuh.yourdomain.com admin@yourdomain.com
-
-Required parameters:
-  DOMAIN_NAME - Fully qualified domain name for your Wazuh installation
-  EMAIL       - Email address for Let's Encrypt certificate registration"
-fi
-
-# Variables
-WAZUH_VERSION="4.12"
-DOMAIN_NAME="$1"
-EMAIL="$2"
-INSTALL_DIR="/tmp/wazuh-install"
-
-log "Starting Wazuh installation on GCP VM"
-log "Domain: $DOMAIN_NAME"
-log "Email: $EMAIL"
+log "Starting Wazuh installation following official quickstart guide"
 
 # Update system
 log "Updating system packages..."
@@ -62,277 +43,143 @@ sudo apt-get update && sudo apt-get upgrade -y
 
 # Install required packages
 log "Installing required packages..."
-# Check if software-properties-common is available (Ubuntu) or use alternatives (Debian)
 if apt-cache show software-properties-common >/dev/null 2>&1; then
-    sudo apt-get install -y curl apt-transport-https lsb-release gnupg2 software-properties-common wget
+    sudo apt-get install -y curl wget
 else
-    # Debian doesn't have software-properties-common, use dirmngr instead
-    sudo apt-get install -y curl apt-transport-https lsb-release gnupg2 dirmngr wget ca-certificates
+    sudo apt-get install -y curl wget ca-certificates
 fi
 
-# Install certbot for SSL certificates
-log "Installing Certbot for SSL certificates..."
-sudo apt-get install -y certbot
-
-# Create temporary installation directory
-log "Creating temporary installation directory..."
-mkdir -p $INSTALL_DIR
-cd $INSTALL_DIR
-
-# Download Wazuh installation assistant
-log "Downloading Wazuh installation assistant..."
+# Download and run Wazuh installation script (official method)
+log "Downloading and running official Wazuh installation script..."
 curl -sO https://packages.wazuh.com/4.12/wazuh-install.sh
+
+# Make script executable
 chmod +x wazuh-install.sh
 
-# Generate SSL certificates using Let's Encrypt before installation
-log "Generating SSL certificates..."
-sudo certbot certonly --standalone --non-interactive --agree-tos --email $EMAIL -d $DOMAIN_NAME
+# Run Wazuh installation (all-in-one deployment)
+log "Installing Wazuh components (this may take several minutes)..."
+sudo bash ./wazuh-install.sh -a
 
-# Install Wazuh using the installation assistant (all-in-one)
-log "Installing Wazuh components using installation assistant..."
-sudo ./wazuh-install.sh -a
-
-# Wait for services to start
-log "Waiting for services to initialize..."
+# Wait for services to initialize
+log "Waiting for Wazuh services to initialize..."
 sleep 30
 
-# Get generated passwords
-WAZUH_PASSWORDS_FILE="/tmp/wazuh-install-files/wazuh-passwords.txt"
-if [ -f "$WAZUH_PASSWORDS_FILE" ]; then
-    log "Wazuh passwords saved to: $WAZUH_PASSWORDS_FILE"
-    ADMIN_PASSWORD=$(grep "User: admin" $WAZUH_PASSWORDS_FILE | awk '{print $NF}')
-else
-    warn "Password file not found at expected location. Check /tmp/wazuh-install-files/"
-    ADMIN_PASSWORD="admin"
-fi
-
-# Configure SSL for Wazuh Dashboard
-log "Configuring SSL for Wazuh Dashboard..."
-
-# Stop Wazuh Dashboard to modify configuration
-sudo systemctl stop wazuh-dashboard
-
-# Backup original configuration
-sudo cp /etc/wazuh-dashboard/opensearch_dashboards.yml /etc/wazuh-dashboard/opensearch_dashboards.yml.backup
-
-# Configure Wazuh Dashboard with SSL
-sudo tee /etc/wazuh-dashboard/opensearch_dashboards.yml > /dev/null <<EOF
-server.host: 0.0.0.0
-server.port: 5601
-opensearch.hosts: https://localhost:9200
-opensearch.ssl.verificationMode: certificate
-opensearch.ssl.certificateAuthorities: ["/etc/ssl/certs/root-ca.pem"]
-opensearch.username: kibanaserver
-opensearch.password: kibanaserver
-opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
-opensearch_security.multitenancy.enabled: false
-opensearch_security.readonly_mode.roles: ["kibana_read_only"]
-server.ssl.enabled: true
-server.ssl.certificate: /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-server.ssl.key: /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
-uiSettings.overrides.defaultRoute: /app/wz-home
-EOF
-
-# Configure SSL certificates for Wazuh components
-log "Configuring SSL certificates..."
-
-# Stop services to configure certificates
-sudo systemctl stop wazuh-indexer 2>/dev/null || true
-sudo systemctl stop wazuh-dashboard 2>/dev/null || true
-
-# Backup original indexer configuration
-sudo cp /etc/wazuh-indexer/opensearch.yml /etc/wazuh-indexer/opensearch.yml.backup
-
-# Ensure root-ca.pem exists (required by indexer configuration)
-if [ ! -f "/etc/wazuh-indexer/certs/root-ca.pem" ]; then
-    sudo cp /etc/wazuh-indexer/certs/admin.pem /etc/wazuh-indexer/certs/root-ca.pem
-fi
-
-# Set proper permissions for indexer certificates
-sudo chown -R wazuh-indexer:wazuh-indexer /etc/wazuh-indexer/certs/
-sudo chmod 755 /etc/wazuh-indexer/certs/
-sudo chmod 644 /etc/wazuh-indexer/certs/*.pem
-sudo chmod 600 /etc/wazuh-indexer/certs/*-key.pem
-
-# Set permissions for Let's Encrypt certificates (for dashboard use)
-sudo chmod 644 /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-sudo chmod 640 /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
-sudo chgrp ssl-cert /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
-sudo usermod -aG ssl-cert wazuh-dashboard
-
-# Install and configure Nginx reverse proxy
-log "Setting up Nginx reverse proxy..."
-sudo apt-get install -y nginx
-
-sudo tee /etc/nginx/sites-available/wazuh > /dev/null <<EOF
-server {
-    listen 80;
-    server_name $DOMAIN_NAME;
-    return 301 https://\$server_name\$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name $DOMAIN_NAME;
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem;
-    
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 5m;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
-    location / {
-        proxy_pass https://localhost:5601;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_redirect off;
-        
-        # SSL verification settings for backend
-        proxy_ssl_verify off;
-        proxy_ssl_session_reuse on;
-    }
-
-    # API endpoint
-    location /api {
-        proxy_pass https://localhost:55000;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_ssl_verify off;
-    }
-}
-EOF
-
-# Enable the site and test nginx configuration
-sudo ln -sf /etc/nginx/sites-available/wazuh /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t
-
-# Configure firewall
-log "Configuring firewall..."
-sudo ufw --force enable
-sudo ufw allow ssh
-sudo ufw allow http
-sudo ufw allow https
-sudo ufw allow 1514/udp  # Wazuh agent communication
-sudo ufw allow 1515/tcp  # Wazuh agent enrollment
-sudo ufw allow 55000/tcp # Wazuh API
-
-# Start all services in the correct order
-log "Starting Wazuh services..."
-sudo systemctl start wazuh-indexer
-sleep 10
-sudo systemctl start wazuh-manager
-sleep 10
-sudo systemctl start wazuh-dashboard
-sleep 10
-sudo systemctl start nginx
-
-# Enable services to start on boot
-sudo systemctl enable wazuh-indexer
-sudo systemctl enable wazuh-manager
-sudo systemctl enable wazuh-dashboard
-sudo systemctl enable nginx
-
-# Setup automatic certificate renewal
-log "Setting up automatic SSL certificate renewal..."
-sudo tee /etc/cron.d/certbot-renew > /dev/null <<EOF
-0 12 * * * root certbot renew --quiet --pre-hook "systemctl stop nginx wazuh-dashboard" --post-hook "systemctl start wazuh-dashboard nginx"
-EOF
-
-# Create certificate renewal hook script
-sudo tee /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh > /dev/null <<EOF
-#!/bin/bash
-# Update certificate permissions for Let's Encrypt renewal
-chmod 644 /etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem
-chmod 640 /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
-chgrp ssl-cert /etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem
-
-# Restart services that use certificates
-systemctl restart wazuh-dashboard
-systemctl restart nginx
-EOF
-
-sudo chmod +x /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh
-
-# Wait for services to be fully ready
-log "Waiting for all services to be ready..."
-sleep 30
-
-# Test service status
-log "Checking service status..."
-for service in wazuh-indexer wazuh-manager wazuh-dashboard nginx; do
+# Check installation status
+log "Verifying Wazuh installation..."
+for service in wazuh-indexer wazuh-manager wazuh-dashboard; do
     if sudo systemctl is-active --quiet $service; then
         log "$service is running"
     else
-        warn "$service is not running - checking status"
+        warn "$service status check:"
         sudo systemctl status $service --no-pager -l
     fi
 done
 
+# Find password file
+log "Locating password file..."
+WAZUH_PASSWORDS_FILE=""
+
+# Check common locations for password file
+if [ -f "/tmp/wazuh-install-files/wazuh-passwords.txt" ]; then
+    WAZUH_PASSWORDS_FILE="/tmp/wazuh-install-files/wazuh-passwords.txt"
+elif [ -f "wazuh-install-files.tar" ]; then
+    log "Extracting password file from tar archive..."
+    tar -tf wazuh-install-files.tar
+    WAZUH_PASSWORDS_FILE="wazuh-install-files.tar"
+else
+    # Search for password file
+    SEARCH_RESULT=$(sudo find / -name "wazuh-passwords.txt" 2>/dev/null | head -1)
+    if [ -n "$SEARCH_RESULT" ]; then
+        WAZUH_PASSWORDS_FILE="$SEARCH_RESULT"
+    fi
+fi
+
+if [ -n "$WAZUH_PASSWORDS_FILE" ]; then
+    log "Password file found at: $WAZUH_PASSWORDS_FILE"
+    if [[ $WAZUH_PASSWORDS_FILE == *.tar ]]; then
+        warn "Password file is in tar archive. Extract with: tar -xf $WAZUH_PASSWORDS_FILE"
+    else
+        ADMIN_PASSWORD=$(grep "User: admin" "$WAZUH_PASSWORDS_FILE" 2>/dev/null | awk '{print $NF}' || echo "admin")
+    fi
+else
+    warn "Password file not found. Check installation output above for credentials."
+    ADMIN_PASSWORD="admin"
+fi
+
+# Configure firewall for Wazuh (following official documentation)
+log "Configuring firewall..."
+sudo ufw --force enable
+sudo ufw allow ssh
+sudo ufw allow 443/tcp    # Wazuh dashboard HTTPS
+sudo ufw allow 1514/udp   # Wazuh agent communication
+sudo ufw allow 1515/tcp   # Wazuh agent enrollment  
+sudo ufw allow 55000/tcp  # Wazuh API
+
+# Get server IP
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
+# Enable services
+sudo systemctl enable wazuh-indexer
+sudo systemctl enable wazuh-manager
+sudo systemctl enable wazuh-dashboard
+
+# Final verification
+log "Final verification..."
+sleep 10
+
+# Check if dashboard is accessible via HTTPS
+if curl -k -s -o /dev/null -w "%{http_code}" https://localhost:443 | grep -q "200\|302\|401"; then
+    log "Dashboard is accessible via HTTPS"
+    DASHBOARD_URL="https://$SERVER_IP"
+elif curl -k -s -o /dev/null -w "%{http_code}" https://localhost:5601 | grep -q "200\|302\|401"; then
+    log "Dashboard is accessible on port 5601"
+    DASHBOARD_URL="https://$SERVER_IP:5601"
+    warn "Dashboard is running on port 5601 instead of standard 443"
+else
+    warn "Dashboard HTTPS accessibility test inconclusive"
+    DASHBOARD_URL="https://$SERVER_IP (try port 443 or 5601)"
+fi
+
 # Clean up installation files
 log "Cleaning up installation files..."
-cd /
-sudo rm -rf $INSTALL_DIR
+rm -f wazuh-install.sh
 
 # Display installation summary
-log "Wazuh installation completed successfully!"
+log "Wazuh installation completed!"
 echo
 echo "============================================="
-echo "           INSTALLATION SUMMARY"
+echo "         WAZUH INSTALLATION SUMMARY"
 echo "============================================="
-echo "Wazuh Dashboard URL: https://$DOMAIN_NAME"
-echo "Default Username: admin"
+echo "Dashboard URL: $DASHBOARD_URL"
+echo "Username: admin"
 if [ -n "$ADMIN_PASSWORD" ] && [ "$ADMIN_PASSWORD" != "admin" ]; then
-    echo "Generated Password: $ADMIN_PASSWORD"
+    echo "Password: $ADMIN_PASSWORD"
 else
     echo "Password: Check $WAZUH_PASSWORDS_FILE"
 fi
 echo ""
-echo "API Endpoint: https://$DOMAIN_NAME:55000"
-echo "API Username: wazuh-wui"
-echo "API Password: Check $WAZUH_PASSWORDS_FILE"
+echo "Server IP: $SERVER_IP"
+echo "API Endpoint: https://$SERVER_IP:55000"
 echo ""
 echo "Agent Registration:"
-echo "Server Address: $DOMAIN_NAME"
+echo "Server Address: $SERVER_IP"
 echo "Registration Port: 1515"
 echo "Communication Port: 1514"
 echo ""
-echo "SSL Certificate: Let's Encrypt (auto-renewal enabled)"
 echo "Password File: $WAZUH_PASSWORDS_FILE"
-echo ""
-echo "Service Management Commands:"
-echo "  sudo systemctl start|stop|restart wazuh-manager"
-echo "  sudo systemctl start|stop|restart wazuh-indexer"
-echo "  sudo systemctl start|stop|restart wazuh-dashboard"
 echo ""
 echo "============================================="
 echo "Next Steps:"
-echo "1. Access the dashboard at https://$DOMAIN_NAME"
-echo "2. Login with the credentials shown above"
-echo "3. Configure agents using the registration service"
-echo "4. Review firewall rules and security settings"
-echo "5. Set up regular backups"
+echo "1. Access dashboard at $DASHBOARD_URL"
+echo "2. Accept the self-signed certificate warning"
+echo "3. Login with username 'admin' and password above"
+echo "4. (Optional) Run ./configure-ssl.sh for custom SSL"
 echo "============================================="
 
-warn "IMPORTANT: Save the password file $WAZUH_PASSWORDS_FILE in a secure location!"
-warn "The generated passwords are unique and cannot be recovered if lost."
+warn "IMPORTANT: Save the password file in a secure location!"
+if [[ $WAZUH_PASSWORDS_FILE == *.tar ]]; then
+    warn "Extract password file: tar -xf $WAZUH_PASSWORDS_FILE"
+fi
 
 log "Installation completed successfully!"
+log "Access your Wazuh dashboard at: $DASHBOARD_URL"
