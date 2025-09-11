@@ -486,4 +486,4 @@ Contributions to improve these installation scripts are welcome. Please ensure:
 
 ---
 
-**Note**: This script is designed for production use but should be reviewed and tested in your specific environment before deployment.
+**Note**: These scripts were all vibe coded using AI and are designed for production use but should be reviewed and tested in your specific environment before deployment.
