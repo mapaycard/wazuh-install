@@ -111,7 +111,8 @@ log "Configuring firewall..."
 sudo ufw --force enable
 sudo ufw allow ssh
 sudo ufw allow 443/tcp    # Wazuh dashboard HTTPS
-sudo ufw allow 1514/udp   # Wazuh agent communication
+sudo ufw allow 1514/udp   # Wazuh agent communication (UDP)
+sudo ufw allow 1514/tcp   # Wazuh agent communication (TCP fallback)
 sudo ufw allow 1515/tcp   # Wazuh agent enrollment  
 sudo ufw allow 55000/tcp  # Wazuh API
 
