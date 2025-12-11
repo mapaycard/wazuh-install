@@ -39,12 +39,13 @@ echo "This script will completely remove:"
 echo "  ✗ All Wazuh services (indexer, manager, dashboard)"
 echo "  ✗ All Wazuh configuration files"
 echo "  ✗ All Wazuh data and logs"
+echo "  ✗ Authelia 2FA (if configured)"
 echo "  ✗ Nginx configuration for Wazuh"
 echo "  ✗ Wazuh systemd services"
 echo "  ✗ Wazuh installation files"
 echo
 echo -e "${RED}WARNING: This action cannot be undone!${NC}"
-echo -e "${YELLOW}SSL certificates will be preserved.${NC}"
+echo -e "${YELLOW}SSL certificates and Docker will be preserved.${NC}"
 echo
 read -p "Are you sure you want to continue? (y/N): " confirm
 
@@ -55,7 +56,69 @@ fi
 
 log "Starting Wazuh cleanup process..."
 
+# ============================================
+# Stop and Remove Authelia (if configured)
+# ============================================
+log "Checking for Authelia installation..."
+if [ -d "/opt/authelia" ]; then
+    log "Authelia found, stopping and removing..."
+
+    # Stop Authelia container
+    if command -v docker &> /dev/null; then
+        # Use sudo for docker commands in case user isn't in docker group
+        cd /opt/authelia 2>/dev/null && sudo docker compose down --remove-orphans 2>/dev/null || warn "Could not stop Authelia container"
+
+        # Remove Authelia image (optional)
+        if sudo docker images 2>/dev/null | grep -q authelia; then
+            read -p "Remove Authelia Docker image? (y/N): " remove_image
+            if [[ $remove_image =~ ^[Yy]$ ]]; then
+                sudo docker rmi authelia/authelia:latest 2>/dev/null || warn "Could not remove Authelia image"
+                log "Removed Authelia Docker image"
+            fi
+        fi
+    else
+        warn "Docker not installed, skipping container cleanup"
+    fi
+
+    # Remove Authelia directory
+    sudo rm -rf /opt/authelia
+    log "Removed Authelia configuration directory"
+
+    # Remove Authelia Nginx configuration
+    if [ -L "/etc/nginx/sites-enabled/wazuh-authelia" ]; then
+        sudo rm -f /etc/nginx/sites-enabled/wazuh-authelia
+        log "Removed Authelia Nginx symlink"
+    fi
+
+    if [ -f "/etc/nginx/sites-available/wazuh-authelia" ]; then
+        sudo rm -f /etc/nginx/sites-available/wazuh-authelia
+        log "Removed Authelia Nginx configuration"
+    fi
+
+    # Restore pre-Authelia Nginx config if it exists (so nginx can still work during cleanup)
+    if [ -f "/etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup" ]; then
+        # Restore the original wazuh-redirect config
+        sudo cp /etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup /etc/nginx/sites-available/wazuh-redirect
+        sudo ln -sf /etc/nginx/sites-available/wazuh-redirect /etc/nginx/sites-enabled/wazuh-redirect
+        sudo rm -f /etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup
+        log "Restored original Nginx configuration from backup"
+    fi
+
+    # Restore Wazuh Dashboard configuration (port 443, external access)
+    DASHBOARD_CONFIG="/etc/wazuh-dashboard/opensearch_dashboards.yml"
+    if [ -f "${DASHBOARD_CONFIG}.pre-authelia.backup" ]; then
+        log "Restoring Wazuh Dashboard configuration..."
+        sudo cp "${DASHBOARD_CONFIG}.pre-authelia.backup" "$DASHBOARD_CONFIG"
+        sudo rm -f "${DASHBOARD_CONFIG}.pre-authelia.backup"
+        log "Restored Wazuh Dashboard to original configuration"
+    fi
+else
+    log "Authelia not installed, skipping..."
+fi
+
+# ============================================
 # Stop all Wazuh services
+# ============================================
 log "Stopping Wazuh services..."
 sudo systemctl stop wazuh-indexer 2>/dev/null || warn "wazuh-indexer service not running"
 sudo systemctl stop wazuh-manager 2>/dev/null || warn "wazuh-manager service not running"
@@ -238,6 +301,13 @@ sudo systemctl daemon-reload
 
 # Remove certificate renewal hooks for Wazuh (if SSL was configured)
 log "Removing Wazuh certificate renewal hooks..."
+# Check for the hook created by configure-ssl.sh
+if [ -f "/etc/letsencrypt/renewal-hooks/post/restart-wazuh-dashboard.sh" ]; then
+    sudo rm -f /etc/letsencrypt/renewal-hooks/post/restart-wazuh-dashboard.sh
+    log "Removed Wazuh dashboard certificate renewal hook"
+fi
+
+# Also check for alternate naming conventions
 if [ -f "/etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh" ]; then
     sudo rm -f /etc/letsencrypt/renewal-hooks/post/wazuh-restart.sh
     log "Removed Wazuh certificate renewal hook"
@@ -248,14 +318,12 @@ if [ -f "/etc/letsencrypt/renewal-hooks/pre/wazuh-stop.sh" ]; then
     log "Removed Wazuh pre-renewal hook"
 fi
 
-# Remove cron jobs
+# Remove cron jobs created by configure-ssl.sh
 log "Removing Wazuh cron jobs..."
 if [ -f "/etc/cron.d/certbot-renew" ]; then
-    # Check if it's Wazuh-specific and remove only if needed
-    if grep -q "wazuh" /etc/cron.d/certbot-renew 2>/dev/null; then
-        sudo rm -f /etc/cron.d/certbot-renew
-        log "Removed Wazuh-specific certbot cron job"
-    fi
+    # This cron job was created by configure-ssl.sh for Wazuh certificate renewal
+    sudo rm -f /etc/cron.d/certbot-renew
+    log "Removed certbot renewal cron job"
 fi
 
 # Remove Wazuh repository (optional)
@@ -290,12 +358,14 @@ echo "✅ Wazuh services stopped and disabled"
 echo "✅ Wazuh packages removed"
 echo "✅ Configuration directories cleaned"
 echo "✅ User accounts removed"
+echo "✅ Authelia 2FA removed (if was configured)"
 echo "✅ Nginx configuration cleaned"
 echo "✅ Systemd services removed"
 echo "✅ Certificate hooks removed"
 echo ""
 echo "Preserved:"
 echo "🔒 SSL certificates (/etc/letsencrypt/)"
+echo "🔒 Docker installation"
 echo "🔒 Nginx service (running)"
 echo "🔒 System packages (curl, certbot, etc.)"
 echo ""

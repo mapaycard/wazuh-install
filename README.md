@@ -4,7 +4,7 @@ This repository contains automated installation scripts for deploying Wazuh on D
 
 ## Overview
 
-This repository provides two scripts for a complete Wazuh deployment:
+This repository provides three scripts for a complete Wazuh deployment:
 
 ### 1. `install-wazuh.sh` - Base Installation
 - Native package installation using official Wazuh installation assistant
@@ -19,6 +19,12 @@ This repository provides two scripts for a complete Wazuh deployment:
 - Automatic certificate renewal with webroot method
 - Production-ready HTTPS setup
 - Direct dashboard access on port 443
+
+### 3. `configure-authelia.sh` - 2FA Protection
+- Authelia deployment via Docker for TOTP-based two-factor authentication
+- Forward authentication via Nginx
+- File-based user management
+- Protects dashboard access while keeping agent ports open
 
 ## Prerequisites
 
@@ -66,6 +72,21 @@ This repository provides two scripts for a complete Wazuh deployment:
 # https://wazuh.yourdomain.com
 ```
 
+### Option C: Full Installation with SSL + 2FA (Most Secure)
+```bash
+# 1. Install Wazuh base
+./install-wazuh.sh
+
+# 2. Configure SSL (requires domain name)
+./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
+
+# 3. Configure 2FA with Authelia
+./configure-authelia.sh wazuh.yourdomain.com admin@yourdomain.com admin
+
+# 4. Access Wazuh via HTTPS with 2FA
+# https://wazuh.yourdomain.com (redirects to auth portal for login)
+```
+
 ## Usage
 
 ### 1. Base Wazuh Installation
@@ -96,6 +117,28 @@ This repository provides two scripts for a complete Wazuh deployment:
 - Sets up HTTP to HTTPS redirect
 - Enables automatic certificate renewal with webroot method
 
+### 3. 2FA Configuration with Authelia (Optional)
+```bash
+# Requires domain, email, and admin username
+./configure-authelia.sh <DOMAIN_NAME> <ADMIN_EMAIL> <ADMIN_USERNAME>
+```
+
+**Parameters:**
+- **DOMAIN_NAME** - Base domain for Wazuh (e.g., wazuh.yourdomain.com)
+- **ADMIN_EMAIL** - Admin email for notifications
+- **ADMIN_USERNAME** - Initial admin username for Authelia login
+
+**What it does:**
+- Installs Docker (if not present)
+- Deploys Authelia container for TOTP-based 2FA
+- Configures Nginx forward authentication
+- Expands SSL certificate to include auth subdomain
+- Creates initial admin user with password prompt
+
+**Prerequisites:**
+- SSL must be configured first (run `configure-ssl.sh`)
+- Auth subdomain DNS must point to server (e.g., `auth.yourdomain.com`)
+
 ### Error Handling
 ```bash
 # SSL script will show usage if parameters missing
@@ -123,12 +166,20 @@ Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 - **Domain-specific SSL** - Custom domain SSL configuration
 - **Auto-renewal** - Zero-downtime certificate renewal
 
+### 2FA Components (configure-authelia.sh)
+- **Authelia** - Self-hosted authentication server (Docker)
+- **TOTP Support** - Google Authenticator / Authy compatible
+- **Forward Auth** - Nginx-based authentication proxy
+- **File-based Users** - Simple YAML user management
+- **Session Management** - Configurable timeout and remember-me
+
 ### Security Features
 - Secure password generation (base installation)
 - Let's Encrypt SSL certificates with automatic renewal (SSL script)
 - TLS 1.2/1.3 encryption (SSL script)
 - UFW firewall configuration
 - Security headers and hardening (SSL script)
+- Two-factor authentication with TOTP (Authelia script)
 
 ## Access Information
 
@@ -143,6 +194,15 @@ Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 |---------|-----|-------------|
 | Dashboard | `https://your-domain` | admin / *generated-password* |
 | API | `https://your-domain:55000` | wazuh-wui / *generated-password* |
+
+### After 2FA Configuration (Authelia)
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Dashboard | `https://your-domain` | Authelia login + TOTP, then Wazuh login |
+| Auth Portal | `https://auth.your-parent-domain` | Authelia username + password + TOTP |
+| API | `https://your-domain:55000` | wazuh-wui / *generated-password* (no 2FA) |
+
+**Note:** Agent ports (1514, 1515, 55000) bypass Authelia - only dashboard requires 2FA.
 
 **🔐 SECURE PASSWORDS**: The installation assistant generates unique, secure passwords automatically!
 - Passwords are saved to `/tmp/wazuh-install-files/wazuh-passwords.txt`
@@ -253,6 +313,42 @@ sudo certbot renew
 sudo certbot renew --dry-run
 ```
 
+### Authelia Management (if 2FA configured)
+```bash
+# Check Authelia status
+sudo docker ps | grep authelia
+
+# View Authelia logs
+sudo docker logs -f authelia
+
+# Restart Authelia
+sudo docker restart authelia
+
+# Check Authelia health
+curl -s http://localhost:9091/api/health
+```
+
+### Authelia User Management
+```bash
+# Generate password hash for new user
+sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password 'newpassword'
+
+# Edit users database
+sudo nano /opt/authelia/config/users_database.yml
+
+# Add new user entry (Authelia auto-reloads):
+# newuser:
+#   disabled: false
+#   displayname: "New User"
+#   password: "$argon2id$..."  # paste hash here
+#   email: newuser@example.com
+#   groups:
+#     - wazuh
+
+# Check notification file for TOTP setup links
+cat /opt/authelia/config/notification.txt
+```
+
 ## Directory Structure
 
 ```
@@ -275,6 +371,15 @@ sudo certbot renew --dry-run
 
 /tmp/wazuh-install-files/       # Installation files (temporary)
 └── wazuh-passwords.txt         # Generated passwords
+
+/opt/authelia/                  # Authelia (if 2FA configured)
+├── config/
+│   ├── configuration.yml       # Main Authelia config
+│   ├── users_database.yml      # User credentials
+│   └── notification.txt        # TOTP setup links
+├── data/
+│   └── db.sqlite3              # Session/auth data
+└── docker-compose.yml          # Container configuration
 ```
 
 ## Troubleshooting
@@ -331,11 +436,35 @@ sudo ufw status
 sudo ufw allow 443/tcp
 ```
 
+#### Authelia Issues (if 2FA configured)
+```bash
+# Check if Authelia container is running
+sudo docker ps | grep authelia
+
+# View Authelia logs for errors
+sudo docker logs authelia --tail 50
+
+# Check Authelia health endpoint
+curl -s http://localhost:9091/api/health
+
+# Restart Authelia
+sudo docker restart authelia
+
+# Check Nginx auth configuration
+sudo nginx -t
+
+# If locked out, temporarily disable 2FA by restoring original Nginx config:
+sudo rm /etc/nginx/sites-enabled/wazuh-authelia
+sudo ln -sf /etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup /etc/nginx/sites-enabled/wazuh-redirect
+sudo systemctl reload nginx
+```
+
 ### Log Locations
 - **Nginx logs**: `/var/log/nginx/access.log`, `/var/log/nginx/error.log`
 - **Wazuh Manager logs**: `/var/ossec/logs/ossec.log`
 - **Wazuh Indexer logs**: `/var/log/wazuh-indexer/wazuh-cluster.log`
 - **Wazuh Dashboard logs**: `/var/log/wazuh-dashboard/wazuh-dashboard.log`
+- **Authelia logs**: `sudo docker logs authelia` or `/opt/authelia/config/authelia.log`
 - **System logs**: `journalctl -u wazuh-manager|wazuh-indexer|wazuh-dashboard`
 
 ## Security Considerations
@@ -348,22 +477,24 @@ sudo ufw allow 443/tcp
 5. **Test SSL certificate auto-renewal**
 
 ### Additional Security Measures
-- Enable two-factor authentication
+- Enable two-factor authentication with `./configure-authelia.sh`
 - Configure custom API credentials
 - Set up log monitoring and alerting
 - Regular security updates
 - Network segmentation
+- Configure SMTP in Authelia for password reset emails (production)
 
 ## Backup and Recovery
 
 ### Important Files to Backup
 - `/var/ossec/` - Wazuh Manager configuration and data
 - `/etc/wazuh-indexer/` - Indexer configuration
-- `/etc/wazuh-dashboard/` - Dashboard configuration  
+- `/etc/wazuh-dashboard/` - Dashboard configuration
 - `/var/lib/wazuh-indexer/` - Indexer data (large, consider selective backup)
 - `/etc/letsencrypt/` - SSL certificates
-- `/etc/nginx/sites-available/wazuh` - Nginx configuration
+- `/etc/nginx/sites-available/` - Nginx configurations
 - `/tmp/wazuh-install-files/wazuh-passwords.txt` - Generated passwords
+- `/opt/authelia/` - Authelia configuration and user database (if 2FA configured)
 
 ### Backup Command Example
 ```bash
@@ -468,10 +599,11 @@ This installation script is provided under the MIT License. Wazuh itself is lice
 
 ```
 wazuh/
-├── install-wazuh.sh      # Base Wazuh installation (HTTP)
-├── configure-ssl.sh      # SSL configuration (HTTPS)
-├── cleanup-wazuh.sh      # Complete removal script
-└── README.md            # This documentation
+├── install-wazuh.sh        # Base Wazuh installation (HTTP)
+├── configure-ssl.sh        # SSL configuration (HTTPS)
+├── configure-authelia.sh   # 2FA configuration (Authelia)
+├── cleanup-wazuh.sh        # Complete removal script
+└── README.md               # This documentation
 ```
 
 ## Contributing
