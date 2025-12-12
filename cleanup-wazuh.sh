@@ -66,7 +66,9 @@ if [ -d "/opt/authelia" ]; then
     # Stop Authelia container
     if command -v docker &> /dev/null; then
         # Use sudo for docker commands in case user isn't in docker group
-        cd /opt/authelia 2>/dev/null && sudo docker compose down --remove-orphans 2>/dev/null || warn "Could not stop Authelia container"
+        if [ -d "/opt/authelia" ]; then
+            cd /opt/authelia && sudo docker compose down --remove-orphans 2>/dev/null || warn "Could not stop Authelia container"
+        fi
 
         # Remove Authelia image (optional)
         if sudo docker images 2>/dev/null | grep -q authelia; then

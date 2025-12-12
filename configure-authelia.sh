@@ -95,6 +95,8 @@ ADMIN_EMAIL="$2"
 ADMIN_USERNAME="$3"
 
 # Extract parent domain for auth subdomain (e.g., wazuh.example.com -> auth.example.com)
+# Note: This works for standard two-level subdomains. For deeper subdomains like
+# wazuh.internal.example.com, the auth subdomain will be auth.internal.example.com
 PARENT_DOMAIN=$(echo "$DOMAIN_NAME" | cut -d'.' -f2-)
 AUTH_SUBDOMAIN="auth.$PARENT_DOMAIN"
 
@@ -145,8 +147,10 @@ fi
 # Check Nginx has auth_request module (required for forward auth)
 if ! nginx -V 2>&1 | grep -q "http_auth_request_module"; then
     log "Nginx auth_request module not available, upgrading to nginx-full..."
+    sudo systemctl stop nginx
     sudo apt-get update
     sudo apt-get install -y nginx-full
+    sudo systemctl start nginx
 
     # Verify module is now available
     if ! nginx -V 2>&1 | grep -q "http_auth_request_module"; then
@@ -339,13 +343,25 @@ log "Authelia configuration created"
 # ============================================
 log "Step 6: Creating initial admin user..."
 
+# Disable xtrace temporarily to prevent password exposure in logs
+_xtrace_was_set=0
+if [[ "$-" == *x* ]]; then
+    set +x
+    _xtrace_was_set=1
+fi
+
 echo
 echo -n "Enter password for $ADMIN_USERNAME: "
-read -rs ADMIN_PASSWORD
+IFS= read -rs ADMIN_PASSWORD
 echo
 echo -n "Confirm password: "
-read -rs ADMIN_PASSWORD_CONFIRM
+IFS= read -rs ADMIN_PASSWORD_CONFIRM
 echo
+
+# Restore xtrace if it was set
+if [[ $_xtrace_was_set -eq 1 ]]; then
+    set -x
+fi
 
 if [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
     error "Passwords do not match"
@@ -361,6 +377,8 @@ log "Generating password hash (this may take a moment)..."
 sudo docker pull authelia/authelia:latest
 
 # Generate password hash using Authelia container
+# Note: Password is passed via command line. For enhanced security in shared environments,
+# consider generating the hash manually before running this script.
 HASHED_PASSWORD=$(sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password "$ADMIN_PASSWORD" 2>/dev/null | grep "Digest:" | awk '{print $2}')
 
 if [ -z "$HASHED_PASSWORD" ]; then
@@ -449,7 +467,9 @@ else
         --non-interactive --agree-tos --email "$ADMIN_EMAIL" || {
             warn "Certificate expansion failed. You may need to:"
             warn "1. Ensure $AUTH_SUBDOMAIN DNS points to this server"
-            warn "2. Run: sudo certbot certonly --standalone -d $CERT_DOMAIN -d $AUTH_SUBDOMAIN"
+            warn "2. Stop Nginx: sudo systemctl stop nginx"
+            warn "3. Run: sudo certbot certonly --standalone -d $CERT_DOMAIN -d $AUTH_SUBDOMAIN"
+            warn "4. Start Nginx: sudo systemctl start nginx"
         }
 fi
 
@@ -502,7 +522,7 @@ if [ "$CURRENT_PORT" != "5601" ]; then
             break
         fi
         if [ $i -eq 30 ]; then
-            warn "Dashboard may not be accessible on port 5601 yet, continuing..."
+            error "Wazuh Dashboard did not become accessible on port 5601 after 60 seconds. Please check the dashboard logs (sudo journalctl -u wazuh-dashboard), verify the service status (sudo systemctl status wazuh-dashboard), and resolve any issues before re-running this script."
         fi
         sleep 2
     done
@@ -653,7 +673,8 @@ server {
         # Buffers for dashboard
         proxy_buffers 8 32k;
         proxy_buffer_size 64k;
-        proxy_read_timeout 90;
+        proxy_read_timeout 300;
+        proxy_send_timeout 300;
     }
 }
 EOF
