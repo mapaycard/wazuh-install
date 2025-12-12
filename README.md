@@ -330,8 +330,8 @@ curl -s http://localhost:9091/api/health
 
 ### Authelia User Management
 ```bash
-# Generate password hash for new user
-sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password 'newpassword'
+# Generate password hash for new user (interactive prompt for password)
+sudo docker run --rm -it authelia/authelia:latest authelia crypto hash generate argon2
 
 # Edit users database
 sudo nano /opt/authelia/config/users_database.yml

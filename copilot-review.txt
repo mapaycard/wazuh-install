@@ -1,0 +1,163 @@
+cleanup-wazuh.sh
+Comment on lines +100 to +115
+    # Restore pre-Authelia Nginx config if it exists (so nginx can still work during cleanup)
+    if [ -f "/etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup" ]; then
+        # Restore the original wazuh-redirect config
+        sudo cp /etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup /etc/nginx/sites-available/wazuh-redirect
+        sudo ln -sf /etc/nginx/sites-available/wazuh-redirect /etc/nginx/sites-enabled/wazuh-redirect
+        sudo rm -f /etc/nginx/sites-available/wazuh-redirect.pre-authelia.backup
+        log "Restored original Nginx configuration from backup"
+    fi
+
+    # Restore Wazuh Dashboard configuration (port 443, external access)
+    DASHBOARD_CONFIG="/etc/wazuh-dashboard/opensearch_dashboards.yml"
+    if [ -f "${DASHBOARD_CONFIG}.pre-authelia.backup" ]; then
+        log "Restoring Wazuh Dashboard configuration..."
+        sudo cp "${DASHBOARD_CONFIG}.pre-authelia.backup" "$DASHBOARD_CONFIG"
+        sudo rm -f "${DASHBOARD_CONFIG}.pre-authelia.backup"
+        log "Restored Wazuh Dashboard to original configuration"
+Copilot AI
+3 hours ago
+Inconsistent restoration order: The script restores the Nginx configuration on line 103 and symlinks it on line 104, but doesn't reload nginx until later. The Wazuh Dashboard is then restored on lines 112-115. If the dashboard restoration fails after nginx is relinked, nginx will be serving the old config pointing to the modified dashboard. Consider reloading nginx only after all restorations succeed, or add error handling to revert the nginx symlink if dashboard restoration fails.
+
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+configure-authelia.sh
+
+    # Wait for dashboard to be ready (it can take up to 30 seconds)
+    log "Waiting for Wazuh Dashboard to be ready..."
+    for i in {1..30}; do
+Copilot AI
+3 hours ago
+The curl command uses -k flag which disables SSL certificate verification. While this is needed since the dashboard uses a self-signed certificate, this could mask actual SSL issues. Consider adding a comment explaining why -k is needed, or check for both the self-signed certificate case and proper certificate validation separately.
+
+Suggested change
+    for i in {1..30}; do
+    for i in {1..30}; do
+        # The -k flag is required here because the Wazuh Dashboard uses a self-signed SSL certificate on localhost.
+        # This is safe in this context since the connection is local and not exposed externally.
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+configure-authelia.sh
+    ports:
+      - "127.0.0.1:9091:9091"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9091/api/health"]
+Copilot AI
+3 hours ago
+The health check uses wget which may not be installed in all Authelia container images. Consider using curl instead since it's more commonly available, or add multiple fallback methods: test: ["CMD-SHELL", "curl -f http://localhost:9091/api/health || wget --no-verbose --tries=1 --spider http://localhost:9091/api/health"]
+
+Suggested change
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9091/api/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/api/health || wget --no-verbose --tries=1 --spider http://localhost:9091/api/health"]
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+configure-authelia.sh
+Comment on lines +524 to +527
+        if [ $i -eq 30 ]; then
+            error "Wazuh Dashboard did not become accessible on port 5601 after 60 seconds. Please check the dashboard logs (sudo journalctl -u wazuh-dashboard), verify the service status (sudo systemctl status wazuh-dashboard), and resolve any issues before re-running this script."
+        fi
+        sleep 2
+Copilot AI
+3 hours ago
+The loop condition checks if i equals 30 but only after attempting the health check. This means if the service becomes healthy exactly at the 30th iteration, the warning will still be displayed. Consider moving the timeout check after the sleep: move lines 524-526 to after line 527, or change the condition to check before the curl attempt.
+
+Suggested change
+        if [ $i -eq 30 ]; then
+            error "Wazuh Dashboard did not become accessible on port 5601 after 60 seconds. Please check the dashboard logs (sudo journalctl -u wazuh-dashboard), verify the service status (sudo systemctl status wazuh-dashboard), and resolve any issues before re-running this script."
+        fi
+        sleep 2
+        sleep 2
+        if [ $i -eq 30 ]; then
+            error "Wazuh Dashboard did not become accessible on port 5601 after 60 seconds. Please check the dashboard logs (sudo journalctl -u wazuh-dashboard), verify the service status (sudo systemctl status wazuh-dashboard), and resolve any issues before re-running this script."
+        fi
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+cleanup-wazuh.sh
+    if command -v docker &> /dev/null; then
+        # Use sudo for docker commands in case user isn't in docker group
+        if [ -d "/opt/authelia" ]; then
+            cd /opt/authelia && sudo docker compose down --remove-orphans 2>/dev/null || warn "Could not stop Authelia container"
+Copilot AI
+3 hours ago
+The condition uses double pipe || followed by true with 2>/dev/null redirection. The true command will always succeed, making the warn statement always execute even if docker compose down succeeds. Consider: cd /opt/authelia && sudo docker compose down --remove-orphans 2>/dev/null || warn "Could not stop Authelia container" without the trailing || true.
+
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+7 hidden conversations
+Load more…
+configure-authelia.sh
+Comment on lines +248 to +252
+JWT_SECRET=$(openssl rand -hex 32)
+SESSION_SECRET=$(openssl rand -hex 32)
+STORAGE_ENCRYPTION_KEY=$(openssl rand -hex 32)
+
+log "Secrets generated"
+Copilot AI
+3 hours ago
+The secrets are generated and directly embedded into the configuration file, but they're never securely cleared from shell variables. Consider adding unset JWT_SECRET SESSION_SECRET STORAGE_ENCRYPTION_KEY ADMIN_PASSWORD ADMIN_PASSWORD_CONFIRM HASHED_PASSWORD after they're written to files to prevent them from persisting in shell history or memory dumps.
+
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+configure-authelia.sh
+
+cat > "$AUTHELIA_DIR/docker-compose.yml" <<EOF
+---
+version: '3.8'
+Copilot AI
+3 hours ago
+The docker-compose version '3.8' is specified, but Docker Compose v2 (the plugin version being installed on line 209) uses a different versioning scheme and doesn't require a version field. Consider removing the version field or updating to use the Compose Specification format, as the 'version' field is obsolete in newer Docker Compose.
+
+Suggested change
+version: '3.8'
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+configure-authelia.sh
+Comment on lines +694 to +703
+for i in {1..30}; do
+    if curl -s http://localhost:9091/api/health 2>/dev/null | grep -q "OK"; then
+        log "Authelia is healthy"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        warn "Authelia health check timed out, but continuing..."
+    fi
+    sleep 2
+done
+Copilot AI
+3 hours ago
+The same timeout logic issue exists here: the loop waits for 30 iterations but may display a warning even if Authelia becomes healthy on the 30th attempt. Consider restructuring to check timeout after the sleep, similar to the dashboard wait loop.
+
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+configure-authelia.sh
+Comment on lines +380 to +382
+# Note: Password is passed via command line. For enhanced security in shared environments,
+# consider generating the hash manually before running this script.
+HASHED_PASSWORD=$(sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password "$ADMIN_PASSWORD" 2>/dev/null | grep "Digest:" | awk '{print $2}')
+Copilot AI
+3 hours ago
+The admin password is passed to authelia crypto hash generate via the --password CLI flag, which exposes the plaintext password in the process command line and potentially to other local users or system tooling that can read process arguments or history. An attacker with local access could capture this value while the hash is being generated and then use it to authenticate to Authelia and the protected Wazuh dashboard. To avoid leaking the password, use a mechanism that does not place secrets in process arguments (e.g., passing via stdin or an environment variable, or generating the hash interactively inside the container and then pasting only the hash into the config).
+
+Suggested change
+# Note: Password is passed via command line. For enhanced security in shared environments,
+# consider generating the hash manually before running this script.
+HASHED_PASSWORD=$(sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password "$ADMIN_PASSWORD" 2>/dev/null | grep "Digest:" | awk '{print $2}')
+# Note: Password is now passed via stdin for enhanced security.
+# This avoids exposing the password in the process list.
+HASHED_PASSWORD=$(echo "$ADMIN_PASSWORD" | sudo docker run --rm -i authelia/authelia:latest authelia crypto hash generate argon2 2>/dev/null | grep "Digest:" | awk '{print $2}')
+Copilot uses AI. Check for mistakes.
+@mohdiarra	Reply...
+README.md
+Comment on lines +333 to +334
+# Generate password hash for new user
+sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password 'newpassword'
+Copilot AI
+3 hours ago
+The documentation instructs generating Authelia password hashes with --password 'newpassword', which encourages passing real user passwords on the command line; this exposes the plaintext password in shell history and process listings visible to other local users or monitoring tools. A local attacker could recover these passwords and use them to log in via Authelia, bypassing 2FA protections for the Wazuh dashboard. Update the recommended procedure to use a method that does not include secrets in command-line arguments (for example, prompting for the password inside the container or reading it from stdin or a secure file).
+
+Suggested change
+# Generate password hash for new user
+sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password 'newpassword'
+# Generate password hash for new user (securely prompts for password)
+sudo docker run --rm -it authelia/authelia:latest authelia crypto hash generate argon2 --password

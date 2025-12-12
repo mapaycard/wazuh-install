@@ -377,9 +377,8 @@ log "Generating password hash (this may take a moment)..."
 sudo docker pull authelia/authelia:latest
 
 # Generate password hash using Authelia container
-# Note: Password is passed via command line. For enhanced security in shared environments,
-# consider generating the hash manually before running this script.
-HASHED_PASSWORD=$(sudo docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password "$ADMIN_PASSWORD" 2>/dev/null | grep "Digest:" | awk '{print $2}')
+# Password is passed via stdin to avoid exposure in process list
+HASHED_PASSWORD=$(echo "$ADMIN_PASSWORD" | sudo docker run --rm -i authelia/authelia:latest authelia crypto hash generate argon2 2>/dev/null | grep "Digest:" | awk '{print $2}')
 
 if [ -z "$HASHED_PASSWORD" ]; then
     error "Failed to generate password hash"
@@ -410,6 +409,9 @@ EOF
 
 log "Admin user '$ADMIN_USERNAME' created"
 
+# Clear sensitive variables from memory
+unset ADMIN_PASSWORD ADMIN_PASSWORD_CONFIRM HASHED_PASSWORD JWT_SECRET SESSION_SECRET STORAGE_ENCRYPTION_KEY
+
 # ============================================
 # Step 7: Create Docker Compose File
 # ============================================
@@ -417,8 +419,6 @@ log "Step 7: Creating Docker Compose configuration..."
 
 cat > "$AUTHELIA_DIR/docker-compose.yml" <<EOF
 ---
-version: '3.8'
-
 services:
   authelia:
     image: authelia/authelia:latest
@@ -432,7 +432,7 @@ services:
     ports:
       - "127.0.0.1:9091:9091"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9091/api/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/api/health || wget --no-verbose --tries=1 --spider http://localhost:9091/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -514,17 +514,18 @@ if [ "$CURRENT_PORT" != "5601" ]; then
     log "Restarting Wazuh Dashboard on port 5601..."
     sudo systemctl restart wazuh-dashboard
 
-    # Wait for dashboard to be ready (it can take up to 30 seconds)
+    # Wait for dashboard to be ready (it can take up to 60 seconds)
     log "Waiting for Wazuh Dashboard to be ready..."
     for i in {1..30}; do
+        # The -k flag is required because Wazuh Dashboard uses a self-signed certificate on localhost
         if curl -s -k -o /dev/null -w "%{http_code}" https://localhost:5601 2>/dev/null | grep -q "200\|302\|401"; then
             log "Wazuh Dashboard now listening on port 5601"
             break
         fi
+        sleep 2
         if [ $i -eq 30 ]; then
             error "Wazuh Dashboard did not become accessible on port 5601 after 60 seconds. Please check the dashboard logs (sudo journalctl -u wazuh-dashboard), verify the service status (sudo systemctl status wazuh-dashboard), and resolve any issues before re-running this script."
         fi
-        sleep 2
     done
 else
     log "Wazuh Dashboard already configured on port 5601"
@@ -696,10 +697,10 @@ for i in {1..30}; do
         log "Authelia is healthy"
         break
     fi
+    sleep 2
     if [ $i -eq 30 ]; then
         warn "Authelia health check timed out, but continuing..."
     fi
-    sleep 2
 done
 
 # ============================================
