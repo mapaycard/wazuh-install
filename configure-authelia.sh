@@ -379,11 +379,25 @@ log "Generating password hash (this may take a moment)..."
 sudo docker pull authelia/authelia:latest
 
 # Generate password hash using Authelia container
-# Password is passed via stdin to avoid exposure in process list
-HASHED_PASSWORD=$(echo "$ADMIN_PASSWORD" | sudo docker run --rm -i authelia/authelia:latest authelia crypto hash generate argon2 2>/dev/null | grep "Digest:" | awk '{print $2}')
+# Password is passed via environment variable to avoid exposure in process list
+HASH_OUTPUT=$(sudo docker run --rm -e "PASSWORD=$ADMIN_PASSWORD" authelia/authelia:latest sh -c 'authelia crypto hash generate argon2 --password "$PASSWORD"' 2>&1)
+
+# Extract the hash from the output (format: "Digest: $argon2id$...")
+# The output contains "Digest: " followed by the hash
+HASHED_PASSWORD=$(echo "$HASH_OUTPUT" | grep "Digest:" | sed 's/Digest: //')
+
+# If that didn't work, try to find the hash directly (starts with $argon2)
+if [ -z "$HASHED_PASSWORD" ]; then
+    HASHED_PASSWORD=$(echo "$HASH_OUTPUT" | grep -E '^\$argon2' | head -1)
+fi
 
 if [ -z "$HASHED_PASSWORD" ]; then
-    error "Failed to generate password hash"
+    error "Failed to generate password hash. Output was: $HASH_OUTPUT"
+fi
+
+# Verify the hash looks correct
+if [[ ! "$HASHED_PASSWORD" =~ ^\$argon2 ]]; then
+    error "Generated hash does not appear valid: $HASHED_PASSWORD"
 fi
 
 # Create users database
