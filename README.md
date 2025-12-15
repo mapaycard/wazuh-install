@@ -132,12 +132,11 @@ This repository provides three scripts for a complete Wazuh deployment:
 - Installs Docker (if not present)
 - Deploys Authelia container for TOTP-based 2FA
 - Configures Nginx forward authentication
-- Expands SSL certificate to include auth subdomain
+- Uses path-based auth (`/auth`) - no additional subdomain required
 - Creates initial admin user with password prompt
 
 **Prerequisites:**
 - SSL must be configured first (run `configure-ssl.sh`)
-- Auth subdomain DNS must point to server (e.g., `auth.yourdomain.com`)
 
 ### Error Handling
 ```bash
@@ -199,7 +198,7 @@ Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Dashboard | `https://your-domain` | Authelia login + TOTP, then Wazuh login |
-| Auth Portal | `https://auth.your-parent-domain` | Authelia username + password + TOTP |
+| Auth Portal | `https://your-domain/auth/` | Authelia username + password + TOTP |
 | API | `https://your-domain:55000` | wazuh-wui / *generated-password* (no 2FA) |
 
 **Note:** Agent ports (1514, 1515, 55000) bypass Authelia - only dashboard requires 2FA.
