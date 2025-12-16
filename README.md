@@ -132,7 +132,7 @@ This repository provides three scripts for a complete Wazuh deployment:
 - Installs Docker (if not present)
 - Deploys Authelia container for TOTP-based 2FA
 - Configures Nginx forward authentication
-- Uses path-based auth (`/auth`) - no additional subdomain required
+- Uses path-based auth (`/sso`) - no additional subdomain required
 - Creates initial admin user with password prompt
 
 **Prerequisites:**
@@ -198,7 +198,7 @@ Example: ./configure-ssl.sh wazuh.yourdomain.com admin@yourdomain.com
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | Dashboard | `https://your-domain` | Authelia login + TOTP, then Wazuh login |
-| Auth Portal | `https://your-domain/auth/` | Authelia username + password + TOTP |
+| Auth Portal | `https://your-domain/sso/` | Authelia username + password + TOTP |
 | API | `https://your-domain:55000` | wazuh-wui / *generated-password* (no 2FA) |
 
 **Note:** Agent ports (1514, 1515, 55000) bypass Authelia - only dashboard requires 2FA.
@@ -327,26 +327,87 @@ sudo docker restart authelia
 curl -s http://localhost:9091/api/health
 ```
 
-### Authelia User Management
+### Authelia TOTP Setup (Google Authenticator)
+
+By default, Authelia uses file-based notifications instead of email. When you register a new TOTP device, the verification link is written to a file on the server instead of being emailed.
+
+**To set up TOTP (Google Authenticator/Authy):**
+
+1. Go to `https://your-domain/sso/` and log in with username/password
+2. Click "Register device" or "Add TOTP"
+3. On the server, check the notification file for the verification link:
+   ```bash
+   cat /opt/authelia/config/notification.txt
+   ```
+4. Copy the verification link and open it in your browser
+5. Scan the QR code with Google Authenticator or Authy
+6. Enter the 6-digit code to complete registration
+
+**For production (optional)** - Configure SMTP for real email delivery:
 ```bash
-# Generate password hash for new user (interactive prompt for password)
-sudo docker run --rm -it authelia/authelia:latest authelia crypto hash generate argon2
-
-# Edit users database
-sudo nano /opt/authelia/config/users_database.yml
-
-# Add new user entry (Authelia auto-reloads):
-# newuser:
-#   disabled: false
-#   displayname: "New User"
-#   password: "$argon2id$..."  # paste hash here
-#   email: newuser@example.com
-#   groups:
-#     - wazuh
-
-# Check notification file for TOTP setup links
-cat /opt/authelia/config/notification.txt
+sudo nano /opt/authelia/config/configuration.yml
 ```
+
+Replace the `notifier` section:
+```yaml
+notifier:
+  smtp:
+    address: 'submissions://smtp.example.com:587'
+    sender: 'Authelia <noreply@yourdomain.com>'
+    username: 'smtp_user'
+    password: 'smtp_password'
+```
+
+Then restart Authelia:
+```bash
+sudo docker restart authelia
+```
+
+### Authelia User Management
+
+**Adding a new user:**
+
+1. Generate a password hash for the new user:
+   ```bash
+   sudo docker run --rm -it authelia/authelia:latest authelia crypto hash generate argon2
+   ```
+   Enter the password when prompted. Copy the hash output (starts with `$argon2id$...`).
+
+2. Edit the users database:
+   ```bash
+   sudo nano /opt/authelia/config/users_database.yml
+   ```
+
+3. Add a new user entry at the end of the file:
+   ```yaml
+   users:
+     # ... existing users ...
+
+     newuser:
+       disabled: false
+       displayname: "New User"
+       password: "$argon2id$v=19$m=65536,t=3,p=4$..."  # paste hash here
+       email: newuser@example.com
+       groups:
+         - wazuh
+   ```
+
+4. Save the file. Authelia automatically reloads the user database (no restart needed).
+
+5. The new user can now log in at `https://your-domain/sso/`. On first login, they will need to set up TOTP - check the notification file for the setup link:
+   ```bash
+   cat /opt/authelia/config/notification.txt
+   ```
+
+**Disabling a user:**
+```bash
+sudo nano /opt/authelia/config/users_database.yml
+# Change: disabled: false → disabled: true
+```
+
+**Resetting a user's password:**
+1. Generate a new password hash (step 1 above)
+2. Edit users database and replace the old password hash with the new one
 
 ## Directory Structure
 

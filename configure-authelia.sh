@@ -95,7 +95,8 @@ ADMIN_EMAIL="$2"
 ADMIN_USERNAME="$3"
 
 # Auth portal path (path-based approach - no separate subdomain needed)
-AUTH_PATH="/auth/"
+# Note: Cannot use /auth/ as Wazuh Dashboard uses /auth/login for its own authentication
+AUTH_PATH="/sso/"
 AUTH_URL="https://$DOMAIN_NAME$AUTH_PATH"
 
 AUTHELIA_DIR="/opt/authelia"
@@ -262,7 +263,7 @@ cat > "$AUTHELIA_DIR/config/configuration.yml" <<EOF
 theme: dark
 
 server:
-  address: 'tcp://0.0.0.0:9091/auth'
+  address: 'tcp://0.0.0.0:9091/sso'
   endpoints:
     authz:
       auth-request:
@@ -509,6 +510,12 @@ if [ "$CURRENT_PORT" != "5601" ]; then
         echo 'server.host: "127.0.0.1"' | sudo tee -a "$DASHBOARD_CONFIG" > /dev/null
     fi
 
+    # Enable secure cookies for proper session handling behind reverse proxy
+    if ! sudo grep -q "^opensearch_security.cookie.secure:" "$DASHBOARD_CONFIG"; then
+        echo 'opensearch_security.cookie.secure: true' | sudo tee -a "$DASHBOARD_CONFIG" > /dev/null
+        log "Enabled secure cookie setting for reverse proxy"
+    fi
+
     log "Restarting Wazuh Dashboard on port 5601..."
     sudo systemctl restart wazuh-dashboard
 
@@ -589,14 +596,14 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
-    # Redirect /auth to /auth/ for consistency
-    location = /auth {
-        return 301 \$scheme://\$host/auth/;
+    # Redirect /sso to /sso/ for consistency
+    location = /sso {
+        return 301 \$scheme://\$host/sso/;
     }
 
-    # Authelia Portal at /auth/ path
-    location /auth/ {
-        proxy_pass http://authelia/auth/;
+    # Authelia Portal at /sso/ path
+    location /sso/ {
+        proxy_pass http://authelia/sso/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -613,7 +620,7 @@ server {
     }
 
     # Authelia internal endpoint for auth request
-    # Note: Do NOT include /auth path here - Authelia handles both / and /auth paths
+    # Note: Do NOT include /sso path here - Authelia handles both / and /sso paths
     location /internal/authelia/authz {
         internal;
 
@@ -642,7 +649,7 @@ server {
         auth_request_set \$name \$upstream_http_remote_name;
         auth_request_set \$email \$upstream_http_remote_email;
 
-        # Handle authentication redirects (redirect to /auth path)
+        # Handle authentication redirects (redirect to /sso path)
         auth_request_set \$redirection_url \$upstream_http_location;
         error_page 401 =302 $AUTH_URL?rd=\$scheme://\$http_host\$request_uri;
 
@@ -654,6 +661,11 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+
+        # Cookie handling - preserve Wazuh session cookies
+        proxy_cookie_path / "/; Secure; HttpOnly; SameSite=Lax";
+        proxy_cookie_domain localhost \$host;
+        proxy_cookie_domain 127.0.0.1 \$host;
 
         # Pass authenticated user info
         proxy_set_header Remote-User \$user;
@@ -688,7 +700,7 @@ sudo docker compose up -d
 # Wait for Authelia to be healthy
 log "Waiting for Authelia to start..."
 for i in {1..30}; do
-    # Authelia responds on both / and /auth paths when subpath is configured
+    # Authelia responds on both / and /sso paths when subpath is configured
     if curl -s http://localhost:9091/api/health 2>/dev/null | grep -q "OK"; then
         log "Authelia is healthy"
         break
