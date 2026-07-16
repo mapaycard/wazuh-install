@@ -309,8 +309,10 @@ session:
   secret: '$SESSION_SECRET'
   name: authelia_session
   same_site: lax
-  inactivity: 5m
-  expiration: 1h
+  # Note: short sessions cause "No config available" errors in the Wazuh dashboard
+  # (expired session -> API calls redirected to /sso portal instead of returning JSON)
+  inactivity: 30m
+  expiration: 12h
   remember_me: 1M
   cookies:
     - domain: '$DOMAIN_NAME'
