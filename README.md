@@ -4,7 +4,7 @@ This repository contains automated installation scripts for deploying Wazuh on D
 
 ## Overview
 
-This repository provides three scripts for a complete Wazuh deployment:
+This repository provides four scripts for a complete Wazuh deployment:
 
 ### 1. `install-wazuh.sh` - Base Installation
 - Native package installation using official Wazuh installation assistant
@@ -25,6 +25,12 @@ This repository provides three scripts for a complete Wazuh deployment:
 - Forward authentication via Nginx
 - File-based user management
 - Protects dashboard access while keeping agent ports open
+
+### 4. `upgrade-wazuh.sh` - Version Upgrades
+- Upgrades all central components (indexer, manager, dashboard) to the latest 4.x
+- Follows the official upgrade order with cluster preparation and health checks
+- Preserves local configuration changes (SSL, Authelia customizations)
+- Re-disables the Wazuh apt repository after upgrading
 
 ## Prerequisites
 
@@ -137,6 +143,34 @@ This repository provides three scripts for a complete Wazuh deployment:
 
 **Prerequisites:**
 - SSL must be configured first (run `configure-ssl.sh`)
+
+### 4. Upgrading Wazuh
+```bash
+# Upgrade to the latest 4.x version available in the Wazuh repository
+./upgrade-wazuh.sh
+
+# Or pin a specific target version
+./upgrade-wazuh.sh 4.14.6
+```
+
+**Parameters:**
+- **TARGET_VERSION** (optional) - Specific 4.x version to upgrade to; defaults to the latest available
+
+**What it does:**
+- Verifies all services are healthy and enough disk space is available
+- Backs up configuration files to `/root/wazuh-upgrade-backup-<timestamp>/`
+- Upgrades components in the official order: indexer → manager → filebeat module/template → dashboard
+- Keeps locally modified configs (SSL, Authelia) without prompting
+- Disables the Wazuh apt repository again when finished
+
+**Prerequisites:**
+- **Take a VM snapshot first** - Wazuh downgrades are not supported
+- Indexer admin password recommended (from `wazuh-passwords.txt`) for cluster preparation steps
+
+**Notes:**
+- The dashboard is unavailable for a few minutes during the upgrade
+- Agents buffer their events during the manager restart (no data loss)
+- Upgrade agents after the manager; agents must never be newer than the manager
 
 ### Error Handling
 ```bash
