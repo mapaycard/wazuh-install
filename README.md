@@ -93,6 +93,23 @@ This repository provides four scripts for a complete Wazuh deployment:
 # https://wazuh.yourdomain.com (redirects to auth portal for login)
 ```
 
+### Upgrading an Existing Installation
+```bash
+# 0. Take a VM snapshot in your cloud console first (downgrades are NOT supported)
+
+# 1. Copy the script to your server (or git pull if the repo is cloned there)
+scp upgrade-wazuh.sh root@your-server:/root/
+
+# 2. Run it on the server (upgrades to the latest 4.x, asks for confirmation)
+ssh root@your-server
+./upgrade-wazuh.sh
+
+# Or pin a specific version:
+./upgrade-wazuh.sh 4.14.6
+```
+
+Have the indexer admin password ready (from `wazuh-passwords.txt`, created during installation) — the script prompts for it to run the cluster preparation steps. See [4. Upgrading Wazuh](#4-upgrading-wazuh) below for details.
+
 ## Usage
 
 ### 1. Base Wazuh Installation
