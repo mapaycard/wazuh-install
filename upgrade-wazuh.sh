@@ -94,7 +94,18 @@ if [ -f /etc/apt/sources.list.d/wazuh.list ]; then
     sudo sed -i 's/^#deb/deb/' /etc/apt/sources.list.d/wazuh.list
 else
     info "Wazuh repository not found, adding it..."
-    curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
+    # Verify the downloaded key against the published Wazuh signing key fingerprint
+    # before trusting it, so a compromised download cannot taint the apt trust chain
+    WAZUH_GPG_FINGERPRINT="0DCFCA5547B19D2A6099506096B3EE5F29111145"
+    KEY_FILE=$(mktemp)
+    curl -fsS https://packages.wazuh.com/key/GPG-KEY-WAZUH -o "$KEY_FILE"
+    ACTUAL_FPR=$(gpg --show-keys --with-colons "$KEY_FILE" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
+    if [ "$ACTUAL_FPR" != "$WAZUH_GPG_FINGERPRINT" ]; then
+        rm -f "$KEY_FILE"
+        error "Wazuh GPG key fingerprint mismatch (got: ${ACTUAL_FPR:-none}, expected: $WAZUH_GPG_FINGERPRINT). Possible tampering - aborting."
+    fi
+    sudo gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import "$KEY_FILE"
+    rm -f "$KEY_FILE"
     sudo chmod 644 /usr/share/keyrings/wazuh.gpg
     echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | sudo tee /etc/apt/sources.list.d/wazuh.list > /dev/null
 fi
@@ -146,11 +157,13 @@ echo ""
 
 indexer_api() {
     # indexer_api <METHOD> <PATH> [JSON_BODY]
+    # Credentials are passed via a curl config file on a file descriptor (process
+    # substitution) instead of argv, so the password never shows up in `ps` output.
     local method="$1" path="$2" body="${3:-}"
     if [ -n "$body" ]; then
-        curl -sk -u "admin:$INDEXER_PASS" -X "$method" "https://localhost:9200$path" -H 'Content-Type: application/json' -d "$body"
+        curl -sk --config <(printf 'user = "admin:%s"\n' "$INDEXER_PASS") -X "$method" "https://localhost:9200$path" -H 'Content-Type: application/json' -d "$body"
     else
-        curl -sk -u "admin:$INDEXER_PASS" -X "$method" "https://localhost:9200$path"
+        curl -sk --config <(printf 'user = "admin:%s"\n' "$INDEXER_PASS") -X "$method" "https://localhost:9200$path"
     fi
 }
 
@@ -230,8 +243,21 @@ log "Manager upgraded: $(sudo /var/ossec/bin/wazuh-control info | grep WAZUH_VER
 # ============================================
 log "Step 6: Updating Filebeat Wazuh module and index template..."
 
-curl -s https://packages.wazuh.com/4.x/filebeat/wazuh-filebeat-0.4.tar.gz | sudo tar -xz -C /usr/share/filebeat/module
-sudo curl -so /etc/filebeat/wazuh-template.json "https://raw.githubusercontent.com/wazuh/wazuh/v$TARGET_VERSION/extensions/elasticsearch/7.x/wazuh-template.json"
+# Download to a temp file with -f (fail on HTTP errors) instead of piping straight
+# into tar, so an error page or truncated download is never extracted into the module
+# directory. Note: Wazuh publishes no checksum/signature for this artifact; TLS to
+# packages.wazuh.com is the same trust anchor used for the apt repository definition.
+FILEBEAT_MODULE=$(mktemp)
+curl -fsSL -o "$FILEBEAT_MODULE" https://packages.wazuh.com/4.x/filebeat/wazuh-filebeat-0.4.tar.gz || { rm -f "$FILEBEAT_MODULE"; error "Failed to download the Filebeat Wazuh module."; }
+sudo tar -xzf "$FILEBEAT_MODULE" -C /usr/share/filebeat/module
+rm -f "$FILEBEAT_MODULE"
+
+# Fetch the version-matched index template into a temp file first for the same reason:
+# a failed download must not clobber the existing working template
+TEMPLATE_FILE=$(mktemp)
+curl -fsS -o "$TEMPLATE_FILE" "https://raw.githubusercontent.com/wazuh/wazuh/v$TARGET_VERSION/extensions/elasticsearch/7.x/wazuh-template.json" || { rm -f "$TEMPLATE_FILE"; error "Failed to download the Wazuh index template for v$TARGET_VERSION."; }
+sudo cp "$TEMPLATE_FILE" /etc/filebeat/wazuh-template.json
+rm -f "$TEMPLATE_FILE"
 sudo chmod go+r /etc/filebeat/wazuh-template.json
 
 sudo systemctl start filebeat
