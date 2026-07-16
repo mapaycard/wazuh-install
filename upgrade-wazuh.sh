@@ -43,6 +43,9 @@ cleanup_on_error() {
         sudo sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/wazuh.list 2>/dev/null || true
     fi
     warn "The Wazuh apt repository has been disabled again."
+    # Best-effort: bring back services the script may have stopped, so a failed
+    # run doesn't leave the stack more broken than the failure itself
+    sudo systemctl start wazuh-indexer filebeat wazuh-dashboard 2>/dev/null || true
     warn "The system may be in a partially upgraded state. Check service status with:"
     warn "  systemctl status wazuh-indexer wazuh-manager wazuh-dashboard filebeat"
     error "Upgrade failed. If services are broken, restore your VM snapshot."
@@ -128,6 +131,12 @@ if [ "$TARGET_VERSION" = "$CURRENT_VERSION" ]; then
     exit 0
 fi
 
+# Refuse downgrades explicitly (Wazuh does not support them)
+if [ "$(printf '%s\n%s\n' "$CURRENT_VERSION" "$TARGET_VERSION" | sort -V | head -1)" != "$CURRENT_VERSION" ]; then
+    sudo sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/wazuh.list
+    error "Target version $TARGET_VERSION is older than the installed version $CURRENT_VERSION. Wazuh downgrades are not supported - restore a snapshot instead."
+fi
+
 # Resolve the full apt version string (e.g. 4.14.6-1) for pinned installs
 APT_VERSION=$(apt-cache madison wazuh-manager | awk -v v="$TARGET_VERSION" '$3 ~ "^"v"-" {print $3; exit}')
 if [ -z "$APT_VERSION" ]; then
@@ -147,25 +156,39 @@ if [ "$CONFIRM" != "yes" ]; then
     exit 0
 fi
 
-# Optional indexer admin credentials for cluster preparation steps.
-# On a single-node deployment these steps are recommended but not strictly required.
-echo ""
-info "The indexer admin password is used to prepare the cluster (disable shard allocation, flush)."
-info "It is in the wazuh-passwords.txt file from the original installation. Leave empty to skip."
-read -s -p "Indexer admin password (or press Enter to skip): " INDEXER_PASS
-echo ""
-
 indexer_api() {
     # indexer_api <METHOD> <PATH> [JSON_BODY]
     # Credentials are passed via a curl config file on a file descriptor (process
     # substitution) instead of argv, so the password never shows up in `ps` output.
+    # --fail makes HTTP errors (401, 5xx) return a non-zero exit code so callers
+    # can actually detect failures.
     local method="$1" path="$2" body="${3:-}"
     if [ -n "$body" ]; then
-        curl -sk --config <(printf 'user = "admin:%s"\n' "$INDEXER_PASS") -X "$method" "https://localhost:9200$path" -H 'Content-Type: application/json' -d "$body"
+        curl -skf --config <(printf 'user = "admin:%s"\n' "$INDEXER_PASS") -X "$method" "https://localhost:9200$path" -H 'Content-Type: application/json' -d "$body"
     else
-        curl -sk --config <(printf 'user = "admin:%s"\n' "$INDEXER_PASS") -X "$method" "https://localhost:9200$path"
+        curl -skf --config <(printf 'user = "admin:%s"\n' "$INDEXER_PASS") -X "$method" "https://localhost:9200$path"
     fi
 }
+
+# Optional indexer admin credentials for cluster preparation steps.
+# On a single-node deployment these steps are recommended but not strictly required.
+# Validated immediately - before any services are stopped - so a typo is caught
+# while the system is still untouched.
+echo ""
+info "The indexer admin password is used to prepare the cluster (disable shard allocation, flush)."
+info "It is in the wazuh-passwords.txt file from the original installation. Leave empty to skip."
+while true; do
+    read -s -p "Indexer admin password (or press Enter to skip): " INDEXER_PASS
+    echo ""
+    if [ -z "$INDEXER_PASS" ]; then
+        break
+    fi
+    if indexer_api GET "/_cluster/health" > /dev/null 2>&1; then
+        log "Indexer credentials verified"
+        break
+    fi
+    warn "Could not authenticate against the indexer with that password. Try again or press Enter to skip."
+done
 
 # ============================================
 # Step 3: Backup Configuration Files
