@@ -1,10 +1,10 @@
 # Wazuh Installation Scripts
 
-This repository contains automated installation scripts for deploying Wazuh on Debian-based VMs. The installation is split into two modular scripts for better flexibility and troubleshooting. Works on any cloud provider including Hetzner, DigitalOcean, GCP, AWS, Azure, and more.
+This repository contains automated scripts for deploying, securing, upgrading, and removing Wazuh on Debian-based VMs. The installation is split into modular scripts for better flexibility and troubleshooting. Works on any cloud provider including Hetzner, DigitalOcean, GCP, AWS, Azure, and more.
 
 ## Overview
 
-This repository provides four scripts for a complete Wazuh deployment:
+This repository provides five scripts covering the full Wazuh lifecycle:
 
 ### 1. `install-wazuh.sh` - Base Installation
 - Native package installation using official Wazuh installation assistant
@@ -32,6 +32,11 @@ This repository provides four scripts for a complete Wazuh deployment:
 - Preserves local configuration changes (SSL, Authelia customizations)
 - Re-disables the Wazuh apt repository after upgrading
 
+### 5. `cleanup-wazuh.sh` - Complete Removal
+- Removes all Wazuh components, packages, and data
+- Preserves SSL certificates and the Nginx service
+- See [Cleanup and Reinstallation](#cleanup-and-reinstallation) for details
+
 ## Prerequisites
 
 ### For Base Installation:
@@ -57,7 +62,7 @@ This repository provides four scripts for a complete Wazuh deployment:
 
 ## Quick Start
 
-### Option A: Basic Installation (HTTP)
+### Option A: Basic Installation (self-signed HTTPS)
 ```bash
 # 1. Download and run base installation
 ./install-wazuh.sh
@@ -303,8 +308,8 @@ sudo systemctl status wazuh-manager
 sudo systemctl status wazuh-indexer  
 sudo systemctl status wazuh-dashboard
 
-# Test HTTP dashboard access
-curl -s http://localhost:5601
+# Test dashboard access (base install serves HTTPS on port 443 with a self-signed cert)
+curl -sk https://localhost -o /dev/null -w '%{http_code}\n'
 ```
 
 #### SSL Installation Verification (if configured)
@@ -630,7 +635,7 @@ sudo cp /tmp/wazuh-install-files/wazuh-passwords.txt ~/wazuh-backup/$(date +%Y%m
 - Monitor disk usage (`/var/lib/wazuh-indexer/` grows over time)
 - Check log rotation settings
 - Verify SSL certificate renewal
-- Update Wazuh packages periodically (`apt update && apt upgrade`)
+- Upgrade Wazuh periodically with `./upgrade-wazuh.sh` (the Wazuh apt repository is deliberately disabled, so `apt upgrade` will not update Wazuh packages)
 - Review security alerts and rules
 - Clean up old indices to save disk space
 
@@ -642,8 +647,8 @@ curl -k https://your-domain/app/wazuh
 # Check API health (use actual password from wazuh-passwords.txt)
 curl -k -u wazuh-wui:YOUR_GENERATED_PASSWORD https://your-domain:55000/
 
-# Check indexer health
-curl -k https://localhost:9200/_cluster/health
+# Check indexer health (requires the indexer admin password from wazuh-passwords.txt)
+curl -k -u admin:YOUR_INDEXER_PASSWORD https://localhost:9200/_cluster/health
 
 # Check all services status
 sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard nginx
@@ -710,9 +715,10 @@ This installation script is provided under the MIT License. Wazuh itself is lice
 
 ```
 wazuh/
-├── install-wazuh.sh        # Base Wazuh installation (HTTP)
-├── configure-ssl.sh        # SSL configuration (HTTPS)
+├── install-wazuh.sh        # Base Wazuh installation (self-signed HTTPS)
+├── configure-ssl.sh        # SSL configuration (Let's Encrypt HTTPS)
 ├── configure-authelia.sh   # 2FA configuration (Authelia)
+├── upgrade-wazuh.sh        # Central components upgrade
 ├── cleanup-wazuh.sh        # Complete removal script
 └── README.md               # This documentation
 ```
